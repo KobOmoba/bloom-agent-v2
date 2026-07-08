@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#06091a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>EduBloom Agent v2</title>
+<style>
+:root{--bg:#06091a;--s1:#0d1226;--s2:#141d35;--s3:#1e2b4a;--border:rgba(100,120,200,.15);--text:#e2e8f0;--sub:#64748b;--brand:#2563eb;--money:#10b981;--danger:#ef4444;--warn:#f59e0b;}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:15px;-webkit-tap-highlight-color:transparent;}
+/* LOGIN */
+#login{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:2rem 1.25rem;background:var(--bg);}
+.logo h1{font-size:1.8rem;font-weight:900;color:var(--brand);text-align:center;}
+.logo p{font-size:.82rem;color:var(--sub);text-align:center;margin-top:4px;}
+.login-card{background:var(--s1);border:1px solid var(--border);border-radius:16px;padding:1.5rem;width:100%;max-width:360px;margin-top:1.5rem;}
+/* APP */
+#app{display:none;flex-direction:column;min-height:100vh;}
+/* HEADER */
+.hdr{background:var(--s1);border-bottom:1px solid var(--border);padding:.65rem 1rem;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:200;}
+.hdr-left{display:flex;align-items:center;gap:.5rem;}
+.hdr-brand{font-size:.88rem;font-weight:800;color:var(--brand);}
+.timer{background:var(--s3);border:1px solid var(--border);border-radius:20px;padding:2px 9px;font-size:.7rem;font-family:monospace;color:var(--money);}
+/* STEP BAR */
+.step-bar{background:var(--s1);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:.6rem 1rem;gap:0;}
+.step-item{display:flex;flex-direction:column;align-items:center;gap:2px;flex:1;}
+.step-dot{width:26px;height:26px;border-radius:50%;border:2px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;color:var(--sub);flex-shrink:0;transition:all .25s;}
+.step-dot.active{border-color:var(--brand);background:var(--brand);color:#fff;box-shadow:0 0 10px rgba(37,99,235,.4);}
+.step-dot.done{border-color:var(--money);background:var(--money);color:#fff;}
+.step-lbl{font-size:.58rem;color:var(--sub);white-space:nowrap;}
+.step-item.active .step-lbl{color:var(--brand);}
+.step-item.done .step-lbl{color:var(--money);}
+.step-line{flex:1;height:2px;background:var(--border);margin-bottom:14px;transition:background .25s;}
+.step-line.done{background:var(--money);}
+/* CONTENT */
+.content{flex:1;padding:1rem 1.25rem;max-width:580px;width:100%;margin:0 auto;}
+.step-screen{display:none;}.step-screen.on{display:block;}
+/* CARDS */
+.card{background:var(--s2);border:1px solid var(--border);border-radius:14px;padding:.9rem;margin-bottom:.7rem;}
+.ct{font-weight:700;font-size:.88rem;margin-bottom:.55rem;}
+/* BUTTONS */
+button{cursor:pointer;font-family:inherit;border:none;border-radius:10px;font-weight:600;transition:opacity .15s;}
+.btn-p{background:var(--brand);color:#fff;width:100%;padding:.82rem;font-size:.92rem;}
+.btn-p:active{opacity:.85;}
+.btn-g{background:var(--s3);color:var(--text);border:1px solid var(--border);padding:.6rem 1rem;}
+.btn-money{background:var(--money);color:#fff;width:100%;padding:.75rem;font-size:.9rem;}
+.btn-sm{padding:.38rem .85rem;font-size:.76rem;}
+.btn-row{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.5rem;}
+/* INPUTS */
+label{display:block;font-size:.75rem;font-weight:600;color:var(--sub);margin-bottom:3px;margin-top:.6rem;}
+input,select{width:100%;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:.62rem .75rem;color:var(--text);font-size:.86rem;font-family:inherit;outline:none;-webkit-appearance:none;appearance:none;}
+input::placeholder{color:var(--sub);}
+input:focus,select:focus{border-color:var(--brand);}
+/* CAPTURE BTN */
+.cap-btn{background:var(--s2);border:2px dashed var(--border);border-radius:14px;min-height:100px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.4rem;padding:1rem;cursor:pointer;position:relative;overflow:hidden;transition:border-color .2s;margin-bottom:.5rem;}
+.cap-btn:active{border-color:var(--brand);}
+.cap-btn.captured{border-style:solid;border-color:var(--money);}
+.cap-btn.captured img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:12px;opacity:.75;}
+.cap-icon{font-size:1.8rem;position:relative;z-index:1;}
+.cap-lbl{font-size:.76rem;color:var(--sub);text-align:center;position:relative;z-index:1;}
+.cap-retake{position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,.75);color:#fff;border-radius:7px;padding:3px 10px;font-size:.68rem;z-index:2;border:none;cursor:pointer;}
+/* PROGRESS */
+.prog-bg{background:var(--s3);border-radius:4px;height:5px;overflow:hidden;margin:6px 0;}
+.prog-fill{height:100%;background:var(--brand);border-radius:4px;width:0;transition:width .4s;}
+.proc-status{font-size:.76rem;color:var(--sub);text-align:center;margin-top:4px;}
+/* LIVE FEED */
+.live-feed{background:var(--s1);border:1px solid var(--border);border-radius:10px;max-height:180px;overflow-y:auto;padding:.4rem;}
+.live-item{display:flex;align-items:center;gap:7px;padding:3px 5px;animation:sli .25s ease;}
+.live-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+@keyframes sli{from{opacity:0;transform:translateX(-8px);}to{opacity:1;transform:none;}}
+/* CLASS GROUPS */
+.class-g{background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:.7rem;margin-bottom:.6rem;}
+.class-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:.4rem;}
+.class-name{font-weight:700;font-size:.84rem;}
+.cbar-bg{height:7px;background:var(--s3);border-radius:4px;overflow:hidden;display:flex;}
+.cbar-paid{height:100%;background:var(--money);}
+.cbar-part{height:100%;background:var(--warn);}
+.stu-row{display:flex;align-items:center;gap:5px;padding:3px 0;border-bottom:1px solid var(--border);}
+.stu-inp{background:var(--s1);border:1px solid transparent;border-radius:6px;padding:3px 7px;font-size:.76rem;color:var(--text);width:100%;margin:0;}
+.stu-inp:focus{border-color:var(--brand);outline:none;}
+.conf-bg{width:34px;height:5px;background:var(--s3);border-radius:3px;flex-shrink:0;}
+.conf-bar{height:100%;border-radius:3px;}
+.badge{display:inline-block;padding:2px 7px;border-radius:12px;font-size:.66rem;font-weight:700;}
+.bg{background:rgba(16,185,129,.14);color:var(--money);}
+.ba{background:rgba(245,158,11,.14);color:var(--warn);}
+.br{background:rgba(239,68,68,.14);color:var(--danger);}
+.bb{background:rgba(37,99,235,.14);color:#60a5fa;}
+/* STATS */
+.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.45rem;margin-bottom:.7rem;}
+.stat-box{background:var(--s3);border-radius:10px;padding:.65rem .4rem;text-align:center;}
+.stat-n{font-size:1.4rem;font-weight:800;line-height:1;}
+.stat-l{font-size:.6rem;color:var(--sub);margin-top:2px;}
+/* PITCH */
+.pitch-hero{background:linear-gradient(135deg,#0d1226 0%,#141d35 100%);border:1px solid var(--border);border-radius:18px;padding:1.4rem;text-align:center;margin-bottom:.9rem;}
+.pitch-name{font-size:1.2rem;font-weight:800;margin-bottom:2px;}
+.pitch-loc{font-size:.76rem;color:var(--sub);}
+.pitch-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:.45rem;margin:1rem 0;}
+.pitch-stat{background:var(--s3);border-radius:12px;padding:.65rem .4rem;text-align:center;}
+.p-stat-n{font-size:1.45rem;font-weight:800;line-height:1;}
+.p-stat-l{font-size:.6rem;color:var(--sub);margin-top:2px;}
+.pitch-ow{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2);border-radius:12px;padding:.7rem;text-align:center;margin-top:.7rem;}
+.pitch-ow-n{font-size:1.3rem;font-weight:800;color:var(--danger);}
+.pitch-ow-l{font-size:.7rem;color:var(--sub);}
+/* PRESENT MODE */
+body.presenting .hdr,body.presenting .step-bar,body.presenting #sec-step1,body.presenting #sec-step2,body.presenting #sec-step4,body.presenting .present-hint,body.presenting .present-nav,body.presenting .bottom-nav{display:none!important;}
+#present-exit{position:fixed;bottom:1rem;right:1rem;background:rgba(0,0,0,.85);color:var(--sub);border:1px solid var(--border);border-radius:8px;padding:5px 14px;font-size:.7rem;z-index:9999;display:none;}
+body.presenting #present-exit{display:block;}
+body.presenting{background:#000;}
+body.presenting #app{background:#000;}
+body.presenting #sec-step3{background:var(--bg);}
+/* REVIEW */
+.rv-row{display:flex;justify-content:space-between;align-items:center;padding:.5rem 0;border-bottom:1px solid var(--border);font-size:.83rem;}
+.rv-row:last-child{border-bottom:none;}
+.rv-l{color:var(--sub);}
+.rv-v{font-weight:600;text-align:right;max-width:60%;}
+/* NAV */
+.bottom-nav{background:var(--s1);border-top:1px solid var(--border);display:flex;padding:.35rem 0;position:sticky;bottom:0;z-index:100;}
+.nlink{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:.38rem;border:none;background:transparent;color:var(--sub);font-size:.6rem;cursor:pointer;}
+.nlink.on{color:var(--brand);}
+.nlink-ic{font-size:1.05rem;}
+/* MISC */
+.sdot{font-size:.7rem;}.sd-on{color:var(--money);}.sd-off{color:var(--danger);}.sd-sync{color:var(--warn);}
+.err{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);border-radius:8px;padding:.6rem;font-size:.8rem;color:#fca5a5;display:none;margin-top:.6rem;}
+.fb{padding:.6rem;border-radius:8px;font-size:.8rem;margin-top:.5rem;display:none;}
+.fb.ok{background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.25);color:#6ee7b7;}
+.fb.bad{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.25);color:#fca5a5;}
+.ai-hint{font-size:.72rem;color:var(--money);margin-bottom:.5rem;display:none;}
+.spacer{height:1.5rem;}
+input[list]::-webkit-calendar-picker-indicator{opacity:0;}
+</style>
+</head>
+<body>
+
+<!-- FIREBASE -->
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+
+<!-- LOGIN -->
+<div id="login">
+  <div class="logo">
+    <h1>🌸 EduBloom</h1>
+    <p>Agent App · v2 AI Onboarding</p>
+  </div>
+  <div class="login-card">
+    <label>Your WhatsApp Number</label>
+    <input id="l-phone" type="tel" placeholder="e.g. 08038740131" autocomplete="tel">
+    <button class="btn-p" id="l-btn" onclick="doLogin()" style="margin-top:.75rem;">▶ Login</button>
+    <div class="err" id="l-err"></div>
+    <div id="sync-login" class="sdot sd-off" style="text-align:center;margin-top:.65rem;font-size:.72rem;">● Offline</div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+
+  <!-- Header -->
+  <div class="hdr">
+    <div class="hdr-left">
+      <span class="hdr-brand">🌸 EduBloom</span>
+      <span style="font-size:.65rem;color:var(--sub);background:var(--s3);border-radius:8px;padding:1px 6px;">v2</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:.4rem;">
+      <span class="timer" id="timerDisplay">00:00</span>
+      <span id="sync" class="sdot sd-off">●</span>
+    </div>
+  </div>
+
+  <!-- WIZARD SECTION -->
+  <div id="sec-wizard" style="display:block;flex:1;overflow-y:auto;padding-bottom:60px;">
+
+    <!-- Step Bar -->
+    <div class="step-bar" id="step-bar">
+      <div class="step-item active" id="si-1"><div class="step-dot active" id="sd-1">1</div><div class="step-lbl">School</div></div>
+      <div class="step-line" id="sl-1"></div>
+      <div class="step-item" id="si-2"><div class="step-dot" id="sd-2">2</div><div class="step-lbl">Students</div></div>
+      <div class="step-line" id="sl-2"></div>
+      <div class="step-item" id="si-3"><div class="step-dot" id="sd-3">3</div><div class="step-lbl">Show</div></div>
+      <div class="step-line" id="sl-3"></div>
+      <div class="step-item" id="si-4"><div class="step-dot" id="sd-4">4</div><div class="step-lbl">Submit</div></div>
+    </div>
+
+    <!-- STEP 1: School Info -->
+    <div id="sec-step1" class="step-screen on">
+      <div class="content">
+        <div class="card">
+          <div class="ct">📸 Step 1: School Information</div>
+          <p style="font-size:.76rem;color:var(--sub);margin-bottom:.7rem;">Photograph the school signboard — AI reads the name and address automatically.</p>
+          <div class="cap-btn" id="signCap" onclick="captureSignboard()">
+            <div class="cap-icon">🏫</div>
+            <div class="cap-lbl">Tap to photograph school signboard</div>
+            <div class="cap-lbl" style="font-size:.65rem;margin-top:2px;">AI extracts name, address, state</div>
+          </div>
+          <input type="file" accept="image/*" capture="environment" id="sign-input" style="display:none">
+          <div id="sign-proc" style="display:none;margin-top:.6rem;">
+            <div class="prog-bg"><div class="prog-fill" id="sign-prog"></div></div>
+            <div class="proc-status" id="sign-status">Reading signboard...</div>
+          </div>
+          <div style="text-align:center;margin:.4rem 0;">
+            <button class="btn-g btn-sm" onclick="skipSignboard()">Skip — enter manually</button>
+          </div>
+        </div>
+
+        <div class="card" id="school-fields" style="display:none;">
+          <div class="ct">📋 School Details</div>
+          <div class="ai-hint" id="ai-hint-sign"></div>
+          <label>School Name *</label>
+          <input id="f-school-name" placeholder="e.g. GRACELAND SCHOOLS" autocomplete="off">
+          <label>Address</label>
+          <input id="f-address" placeholder="e.g. 12 Akin Street, Abeokuta">
+          <label>State *</label>
+          <input id="f-state" placeholder="e.g. Ogun" list="states-list">
+          <datalist id="states-list">
+            <option>Abia</option><option>Adamawa</option><option>Akwa Ibom</option><option>Anambra</option><option>Bauchi</option>
+            <option>Bayelsa</option><option>Benue</option><option>Borno</option><option>Cross River</option><option>Delta</option>
+            <option>Ebonyi</option><option>Edo</option><option>Ekiti</option><option>Enugu</option><option>Gombe</option>
+            <option>Imo</option><option>Jigawa</option><option>Kaduna</option><option>Kano</option><option>Katsina</option>
+            <option>Kebbi</option><option>Kogi</option><option>Kwara</option><option>Lagos</option><option>Nasarawa</option>
+            <option>Niger</option><option>Ogun</option><option>Ondo</option><option>Osun</option><option>Oyo</option>
+            <option>Plateau</option><option>Rivers</option><option>Sokoto</option><option>Taraba</option><option>Yobe</option>
+            <option>Zamfara</option><option>FCT</option>
+          </datalist>
+          <label>LGA</label>
+          <input id="f-lga" placeholder="e.g. Abeokuta South">
+          <label>Principal Name *</label>
+          <input id="f-principal" placeholder="e.g. Mr. James Adeyemi">
+          <label>Principal WhatsApp *</label>
+          <input id="f-phone" type="tel" placeholder="e.g. 08012345678">
+          <label>Email (optional)</label>
+          <input id="f-email" type="email" placeholder="admin@school.ng">
+        </div>
+
+        <div class="card" id="terms-card" style="display:none;">
+          <div class="ct">📅 Subscription</div>
+          <label>Number of Terms</label>
+          <select id="f-terms">
+            <option value="1">1 Term</option>
+            <option value="2">2 Terms</option>
+            <option value="3">3 Terms</option>
+          </select>
+          <p style="font-size:.7rem;color:var(--sub);margin-top:.4rem;">Plan auto-selected after scanning register.</p>
+        </div>
+
+        <button class="btn-p" id="btn-step1-next" style="display:none;" onclick="validateStep1()">Next: Scan Fee Register →</button>
+        <div class="spacer"></div>
+      </div>
+    </div>
+
+    <!-- STEP 2: Student Records -->
+    <div id="sec-step2" class="step-screen">
+      <div class="content">
+        <div class="card">
+          <div class="ct">📚 Step 2: Fee Register Scan</div>
+          <p style="font-size:.76rem;color:var(--sub);margin-bottom:.7rem;">Ask the principal for the fee ledger/register. Photograph each page — AI reads every student name and payment status live.</p>
+          <div id="ledger-caps">
+            <div class="cap-btn" id="lc-0" onclick="captureLedger(0)">
+              <div class="cap-icon">📖</div>
+              <div class="cap-lbl">Tap to photograph Page 1 of fee register</div>
+            </div>
+            <input type="file" accept="image/*" capture="environment" id="li-0" style="display:none">
+          </div>
+          <div id="ledger-actions" style="display:none;margin-top:.6rem;">
+            <button class="btn-p" id="btn-process" onclick="processAllLedgers()">🔍 Read All Pages with AI</button>
+            <div class="btn-row" style="margin-top:.45rem;">
+              <button class="btn-g btn-sm" id="btn-add-page" onclick="addLedgerPage()">+ Add Another Page</button>
+              <button class="btn-g btn-sm" onclick="skipLedger()">Skip</button>
+            </div>
+          </div>
+          <div id="ledger-skip-init" style="text-align:center;margin-top:.4rem;">
+            <button class="btn-g btn-sm" onclick="skipLedger()">Skip — no register available</button>
+          </div>
+        </div>
+
+        <div class="card" id="ledger-proc" style="display:none;">
+          <div class="ct">🔍 Reading Register...</div>
+          <div class="prog-bg"><div class="prog-fill" id="ledger-prog"></div></div>
+          <div class="proc-status" id="ledger-status">Initialising...</div>
+          <div class="live-feed" id="live-feed" style="margin-top:.5rem;display:none;">
+            <div id="live-content"></div>
+          </div>
+        </div>
+
+        <div id="ledger-results" style="display:none;">
+          <div class="card">
+            <div class="ct">✅ Students Found</div>
+            <div class="stat-grid">
+              <div class="stat-box"><div class="stat-n" id="as-total">0</div><div class="stat-l">Students</div></div>
+              <div class="stat-box"><div class="stat-n" id="as-classes">0</div><div class="stat-l">Classes</div></div>
+              <div class="stat-box"><div class="stat-n" id="as-conf" style="font-size:1.05rem;">—</div><div class="stat-l">Confidence</div></div>
+            </div>
+            <p style="font-size:.7rem;color:var(--sub);">Tap any name to correct it. Green = high confidence.</p>
+          </div>
+          <div id="class-groups"></div>
+          <div id="tier-auto-card"></div>
+        </div>
+
+        <div id="step2-nav" style="display:none;padding:0 1.25rem 1.5rem;">
+          <button class="btn-p" onclick="goStep(3)">Next: Show Principal →</button>
+          <button class="btn-g btn-sm" style="width:100%;margin-top:.4rem;" onclick="goStep(1)">← Back</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 3: Show Principal (Pitch) -->
+    <div id="sec-step3" class="step-screen">
+      <div style="padding:1.25rem;max-width:580px;margin:0 auto;padding-bottom:1.5rem;">
+        <div class="pitch-hero">
+          <div class="pitch-name" id="pitch-name">—</div>
+          <div class="pitch-loc" id="pitch-loc">—</div>
+          <div class="pitch-stats">
+            <div class="pitch-stat"><div class="p-stat-n" id="p-students">0</div><div class="p-stat-l">Students</div></div>
+            <div class="pitch-stat"><div class="p-stat-n" id="p-classes">0</div><div class="p-stat-l">Classes</div></div>
+            <div class="pitch-stat"><div class="p-stat-n" id="p-rate" style="font-size:1.1rem;">0%</div><div class="p-stat-l">Fees Paid</div></div>
+          </div>
+          <div class="pitch-ow">
+            <div class="pitch-ow-n" id="p-outstanding">₦0</div>
+            <div class="pitch-ow-l" id="p-owing-txt">outstanding fees</div>
+          </div>
+        </div>
+        <div id="pitch-bars"></div>
+        <div class="present-hint" style="margin-top:.65rem;">
+          <button class="btn-g" style="width:100%;" onclick="togglePresent()">⛶ Fullscreen — Turn to Principal</button>
+        </div>
+        <div class="present-nav" style="margin-top:.5rem;">
+          <button class="btn-p" onclick="goStep(4)">Continue: Review & Submit →</button>
+          <button class="btn-g btn-sm" style="width:100%;margin-top:.4rem;" onclick="goStep(2)">← Back</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 4: Review & Submit -->
+    <div id="sec-step4" class="step-screen">
+      <div class="content">
+        <div class="card"><div class="ct">📋 Review</div><div id="review-rows"></div></div>
+        <div class="card" id="tier-confirm-card" style="display:none;">
+          <div class="ct">💰 Pricing</div>
+          <div id="tier-confirm-inner"></div>
+        </div>
+        <div class="card">
+          <div class="ct">👤 Your Commission</div>
+          <div id="comm-preview" style="font-size:1.15rem;font-weight:800;color:var(--money);text-align:center;padding:.4rem;"></div>
+        </div>
+        <div class="fb" id="submit-fb"></div>
+        <button class="btn-money" id="btn-submit" onclick="submitDeal()">📤 Submit to Bayo's Portal</button>
+        <button class="btn-g btn-sm" style="width:100%;margin-top:.4rem;" onclick="goStep(3)">← Back</button>
+        <div class="spacer"></div>
+      </div>
+    </div>
+
+  </div><!-- /sec-wizard -->
+
+  <!-- DEALS SECTION -->
+  <div id="sec-deals" style="display:none;flex:1;overflow-y:auto;padding-bottom:60px;">
+    <div class="content">
+      <div class="card">
+        <div class="ct">📋 My Submitted Deals</div>
+        <div id="deals-list"><p style="color:var(--sub);font-size:.8rem;text-align:center;padding:1.5rem;">Loading...</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Nav -->
+  <div class="bottom-nav">
+    <button class="nlink on" data-tab="wizard" onclick="goTab('wizard')">
+      <span class="nlink-ic">🏫</span>New School
+    </button>
+    <button class="nlink" data-tab="deals" onclick="goTab('deals')">
+      <span class="nlink-ic">📋</span>My Deals
+    </button>
+    <button class="nlink" onclick="logout()">
+      <span class="nlink-ic">🚪</span>Logout
+    </button>
+  </div>
+
+</div><!-- /app -->
+
+<button id="present-exit" onclick="togglePresent()">✕ Exit</button>
+
+<script src="app.js?v=1"></script>
+</body>
+</html>

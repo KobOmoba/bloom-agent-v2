@@ -1,3 +1,18 @@
+// ── Request Access ────────────────────────────────────────────────────────
+function requestAccess(){
+  const name  = ($('req-name')?.value||'').trim();
+  const phone = ($('l-phone')?.value||'').trim();
+  const area  = ($('req-area')?.value||'').trim();
+  if(!name){alert('Enter your full name first.');return;}
+  const msg =
+    `Hi Bayo, I would like to be registered as an EduBloom agent.\n\n` +
+    `*Name:* ${name}\n` +
+    `*Phone:* ${phone||'(see this number)'}\n` +
+    `*Area/Zone:* ${area||'Not specified'}\n\n` +
+    `Please add me to the agent app. Thank you!`;
+  window.open(`https://wa.me/2348145073941?text=${encodeURIComponent(msg)}`,'_blank');
+}
+
 // ── Firebase ───────────────────────────────────────────────────────────────
 const FB={apiKey:"AIzaSyCVEdunn3AZndDP5Rm1Z3Kv1e6G6W2mB_o",authDomain:"educationbloom-699ed.firebaseapp.com",projectId:"educationbloom-699ed",storageBucket:"educationbloom-699ed.firebasestorage.app",messagingSenderId:"33750392965",appId:"1:33750392965:web:2b3da887ede996ea8389ec"};
 let db=null;
@@ -102,7 +117,8 @@ async function doLogin(){
     ]);
     const seen=new Set();
     const docs=[...s1.docs,...s2.docs].filter(d=>{if(seen.has(d.id))return false;seen.add(d.id);return true;});
-    if(!docs.length){showE(err,'Not registered. Contact Bayo: +234 814 507 3941');btn.textContent='▶ Login';btn.disabled=false;return;}
+    if(!docs.length){showE(err,'Number not registered. Fill in the form below to request access.');
+    const rb=$('req-access-box');if(rb)rb.style.display='block';btn.textContent='▶ Login';btn.disabled=false;return;}
     agent={id:docs[0].id,...docs[0].data()};
     localStorage.setItem('ag2_agent',JSON.stringify(agent));
     startApp();
@@ -248,7 +264,7 @@ function addLedgerPage(){
   const wrap=document.createElement('div');wrap.style.marginTop='.5rem';
   const btn=document.createElement('div');
   btn.className='cap-btn';btn.id='lc-'+idx;btn.onclick=()=>captureLedger(idx);
-  btn.innerHTML=`<div class="cap-icon">📖</div><div class="cap-lbl">Tap to photograph Page ${idx+1}</div>`;
+  btn.innerHTML=`<div class="cap-icon">📖</div><div class="cap-lbl">📷 Camera  ·  🖼️ Gallery — Page ${idx+1}</div>`;
   const inp=document.createElement('input');
   inp.type='file';inp.accept='image/*';inp.id='li-'+idx;inp.style.display='none';
   btn.appendChild(inp);

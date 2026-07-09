@@ -1,3 +1,27 @@
+
+// ── Retry with clearer image ──────────────────────────────────────────────
+function retryWithBetterImage(){
+  // Reset the ledger state and re-prompt for a clearer photo
+  ledgerImages={};
+  const caps=document.getElementById('ledger-caps');
+  if(caps){
+    // Remove all but first slot
+    while(caps.children.length>2)caps.removeChild(caps.lastChild);
+    const btn=document.getElementById('lc-0');
+    if(btn){
+      btn.classList.remove('captured');
+      [...btn.children].forEach(c=>{if(c.tagName==='IMG'||c.classList?.contains('cap-retake'))c.remove();else c.style.display='';});
+    }
+  }
+  document.getElementById('ledger-actions').style.display='none';
+  document.getElementById('ledger-skip-init').style.display='block';
+  document.getElementById('ledger-results').style.display='none';
+  document.getElementById('step2-nav').style.display='none';
+  const dbg=document.getElementById('ocr-debug');if(dbg)dbg.style.display='none';
+  allStudents=[];classGroups={};ledgerPageCount=1;
+  alert('Tips for a clearer photo:\n\n• Hold phone steady, 30-40cm above the ledger\n• Ensure good lighting — near a window if possible\n• The page should fill most of the frame\n• Avoid shadows on the writing');
+}
+
 // ── Request Access ────────────────────────────────────────────────────────
 function requestAccess(){
   const name  = ($('req-name')?.value||'').trim();
@@ -304,29 +328,60 @@ async function processAllLedgers(){
 
   allStudents=[];classGroups={};
 
-  const prompt=`You are reading a Nigerian school fee register (ledger). Extract EVERY student record visible.
-Return valid JSON ONLY — no markdown, no explanation, nothing else:
+  const prompt`You are an expert at reading Nigerian handwritten school fee registers.
+This image shows a handwritten fee register. Student names are written in rows.
+
+YOUR TASK: Extract EVERY student name you can see. Be aggressive — if you can read 2+ letters that look like part of a name, include it. Do NOT return empty results.
+
+Return valid JSON ONLY — no markdown, no explanation:
 {"students":[{"name":"SURNAME FIRSTNAME","class":"BASIC 4","balance":0,"termFees":28000,"paid":28000,"status":"FULLY PAID"}]}
-Rules:
-- name: surname first, ALL CAPS, only letters and spaces
-- class: e.g. "BASIC 4", "JSS 2", "NURSERY 1", "KG 2", "PRIMARY 3"
-- balance: amount owed from last term (integer, 0 if none)
-- termFees: this term's school fees (integer, 0 if unclear)
-- paid: amount paid this term (integer, 0 if none)
-- status: EXACTLY one of: "FULLY PAID", "PART PAID", "OWING"
-- If a number is unclear use 0
-- Include every student you can read, even partially`;
+
+Field rules:
+- name: Nigerian surname first, ALL CAPS. Include even if only partially legible.
+- class: the class visible on this page e.g. "BASIC 4", "JSS 2", "NURSERY 1", "PRIMARY 3". Use "UNKNOWN" if unclear.
+- balance: carry-over amount owed (integer, 0 if none)
+- termFees: this term fees (integer, 0 if unclear)
+- paid: amount paid (integer, 0 if none)
+- status: exactly one of "FULLY PAID", "PART PAID", "OWING"
+
+Common Nigerian surnames: ADEYEMI, OKONKWO, IBRAHIM, AFOLABI, GBADAMOSI, OLUWASEUN, BALOGUN, NWACHUKWU, ABDULLAHI
+Read carefully. Return every row that has a name, even partial names.;
 
   for(let i=0;i<images.length;i++){
     const[idx,url]=images[i];
     prog.style.width=Math.round((i/images.length)*85)+'%';
     status.textContent=`Reading page ${parseInt(idx)+1} of ${images.length}...`;
     try{
-      const compressed=await compressImage(url,800);
+      const compressed=await compressLedger(url);
       const result=await callGroqVision(compressed,prompt,keys.groq);
       let parsed={students:[]};
       try{parsed=JSON.parse(result.replace(/```json|```/g,'').trim());}
       catch(e){parsed={students:fallbackExtract(result)};}
+      
+      // If JSON returned 0 students, try a simpler name-only prompt
+      if((!parsed.students||!parsed.students.length)&&keys.groq){
+        console.log('[v2] Primary prompt returned 0. Trying name-only fallback...');
+        try{
+          const fallbackPrompt=`Look at this handwritten Nigerian school register.
+List every person's name you can see, one per line, surname first in CAPS.
+Example output:
+ADEYEMI SAMUEL
+IBRAHIM FATIMA
+OKONKWO CHIOMA
+Only output names, nothing else.`;
+          const result2=await callGroqVision(compressed,fallbackPrompt,keys.groq);
+          console.log('[v2] Fallback raw:',result2.slice(0,300));
+          const names=result2.split(/
+/).map(l=>l.trim()).filter(l=>l.length>2&&/[A-Za-z]{2,}/.test(l)&&!/^\d+$/.test(l));
+          parsed={students:names.map(n=>({name:n.toUpperCase().replace(/[^A-Z\s'\-\.]/g,'').trim(),class:'UNKNOWN',balance:0,termFees:0,paid:0,status:'OWING'})).filter(s=>s.name.length>2)};
+          console.log('[v2] Fallback found:',parsed.students.length,'names');
+        }catch(e2){console.warn('[v2] Fallback also failed:',e2.message);}
+      }
+      
+      // Store raw result for debug
+      window._lastGroqRaw = result;
+      console.log('[v2] Groq raw response:',result.slice(0,500));
+      
       const students=parsed.students||[];
       const seenNames=new Set(allStudents.map(s=>s.name.toLowerCase().replace(/[^a-z]/g,'')));
       students.forEach(s=>{
@@ -393,6 +448,15 @@ function showLedgerResults(){
   $('as-classes').textContent=Object.keys(classGroups).length;
   const avgConf=allStudents.length>0?Math.round(allStudents.reduce((s,r)=>s+(r.confidence||50),0)/allStudents.length):0;
   $('as-conf').textContent=avgConf+'%';
+  // Show debug info if 0 students
+  if(!allStudents.length){
+    const dbg=document.getElementById('ocr-debug');
+    if(dbg){
+      const raw=window._lastGroqRaw||'(no response stored)';
+      dbg.style.display='block';
+      dbg.innerHTML=`<div style="font-size:.7rem;font-weight:700;color:var(--warn);margin-bottom:.3rem;">⚠️ 0 students extracted. Groq raw response (first 400 chars):</div><div style="font-size:.65rem;color:var(--sub);background:var(--s1);padding:.5rem;border-radius:6px;overflow-wrap:break-word;white-space:pre-wrap;">${esc(raw.slice(0,400))}</div><button onclick="retryWithBetterImage()" style="background:var(--brand);color:#fff;border:none;border-radius:8px;padding:.4rem .8rem;font-size:.74rem;cursor:pointer;margin-top:.4rem;font-weight:700;">📸 Retake clearer photo & retry</button>`;
+    }
+  }
 
   const groupsEl=$('class-groups');groupsEl.innerHTML='';
   for(const[cls,students]of Object.entries(classGroups)){
@@ -542,6 +606,38 @@ async function renderDeals(){
     const ts=d.timestamp?.toDate?d.timestamp.toDate().toLocaleDateString('en-NG'):'just now';
     return`<div class="card" style="margin-bottom:.6rem;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><span class="badge ${sc}">${(d.status||'pending').toUpperCase()}</span><span style="font-size:.68rem;color:var(--sub);">${ts}</span></div><div style="font-weight:700;font-size:.88rem;">${esc(d.school?.name)}</div><div style="font-size:.74rem;color:var(--sub);">${d.school?.studentCount||0} students · ${esc(d.tier?.name||'—')}</div><div style="font-size:.74rem;color:var(--sub);">${esc(d.school?.state||'')}${d.school?.lga?' · '+esc(d.school.lga):''}</div><div style="color:var(--money);font-weight:700;font-size:.8rem;margin-top:3px;">Commission: ${fmt(comm)}</div>${d.students?.length?`<div style="margin-top:4px;"><span class="badge bb">📊 ${d.students.length} students pre-loaded</span></div>`:''}</div>`;
   }).join('');
+}
+
+
+// ── Ledger-specific compression — higher res + contrast for handwriting ───
+async function compressLedger(dataUrl){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=()=>{
+      let w=img.naturalWidth||img.width||1000;
+      let h=img.naturalHeight||img.height||750;
+      // Keep larger for ledgers — handwriting needs resolution
+      const maxW=1200;
+      const scale=Math.min(1,maxW/w);
+      w=Math.round(w*scale);h=Math.round(h*scale);
+      const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+      const cx=cv.getContext('2d');
+      // Draw base image
+      cx.drawImage(img,0,0,w,h);
+      // Pixel-level contrast boost for handwriting
+      const id=cx.getImageData(0,0,w,h);const d=id.data;
+      for(let i=0;i<d.length;i+=4){
+        // Convert to grayscale first
+        const gray=d[i]*.299+d[i+1]*.587+d[i+2]*.114;
+        // Apply contrast stretch: dark pixels darker, bright pixels brighter
+        const c=Math.max(0,Math.min(255,(gray-128)*1.6+128+10));
+        d[i]=c;d[i+1]=c;d[i+2]=c;
+      }
+      cx.putImageData(id,0,0);
+      resolve(cv.toDataURL('image/jpeg',0.92));
+    };
+    img.onerror=reject;img.src=dataUrl;
+  });
 }
 
 // ── OCR Utilities ──────────────────────────────────────────────────────────

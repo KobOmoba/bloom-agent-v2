@@ -148,6 +148,14 @@ input[list]::-webkit-calendar-picker-indicator{opacity:0;}
     <input id="l-phone" type="tel" placeholder="e.g. 08038740131" autocomplete="tel">
     <button class="btn-p" id="l-btn" onclick="doLogin()" style="margin-top:.75rem;">▶ Login</button>
     <div class="err" id="l-err"></div>
+    <div id="req-access-box" style="display:none;margin-top:.75rem;border-top:1px solid var(--border);padding-top:.75rem;">
+      <p style="font-size:.74rem;color:var(--sub);margin-bottom:.5rem;">Not yet registered? Send Bayo a request:</p>
+      <label>Your Full Name</label>
+      <input id="req-name" placeholder="e.g. David Adeyemi" autocomplete="name">
+      <label>Your Area / Zone</label>
+      <input id="req-area" placeholder="e.g. Abeokuta South">
+      <button onclick="requestAccess()" style="background:var(--money);color:#fff;width:100%;padding:.65rem;border-radius:10px;font-weight:700;font-size:.84rem;margin-top:.55rem;border:none;cursor:pointer;">📲 Send Request to Bayo via WhatsApp</button>
+    </div>
     <div id="sync-login" class="sdot sd-off" style="text-align:center;margin-top:.65rem;font-size:.72rem;">● Offline</div>
   </div>
 </div>
@@ -189,10 +197,10 @@ input[list]::-webkit-calendar-picker-indicator{opacity:0;}
           <p style="font-size:.76rem;color:var(--sub);margin-bottom:.7rem;">Photograph the school signboard — AI reads the name and address automatically.</p>
           <div class="cap-btn" id="signCap" onclick="captureSignboard()">
             <div class="cap-icon">🏫</div>
-            <div class="cap-lbl">Tap to photograph school signboard</div>
+            <div class="cap-lbl">📷 Camera  ·  🖼️ Gallery</div>
             <div class="cap-lbl" style="font-size:.65rem;margin-top:2px;">AI extracts name, address, state</div>
           </div>
-          <input type="file" accept="image/*" capture="environment" id="sign-input" style="display:none">
+          <input type="file" accept="image/*" id="sign-input" style="display:none">
           <div id="sign-proc" style="display:none;margin-top:.6rem;">
             <div class="prog-bg"><div class="prog-fill" id="sign-prog"></div></div>
             <div class="proc-status" id="sign-status">Reading signboard...</div>
@@ -256,9 +264,9 @@ input[list]::-webkit-calendar-picker-indicator{opacity:0;}
           <div id="ledger-caps">
             <div class="cap-btn" id="lc-0" onclick="captureLedger(0)">
               <div class="cap-icon">📖</div>
-              <div class="cap-lbl">Tap to photograph Page 1 of fee register</div>
+              <div class="cap-lbl">📷 Camera  ·  🖼️ Gallery — Page 1</div>
             </div>
-            <input type="file" accept="image/*" capture="environment" id="li-0" style="display:none">
+            <input type="file" accept="image/*" id="li-0" style="display:none">
           </div>
           <div id="ledger-actions" style="display:none;margin-top:.6rem;">
             <button class="btn-p" id="btn-process" onclick="processAllLedgers()">🔍 Read All Pages with AI</button>

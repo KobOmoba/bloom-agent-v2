@@ -1,42 +1,3 @@
-
-// ── Retry with clearer image ──────────────────────────────────────────────
-function retryWithBetterImage(){
-  // Reset the ledger state and re-prompt for a clearer photo
-  ledgerImages={};
-  const caps=document.getElementById('ledger-caps');
-  if(caps){
-    // Remove all but first slot
-    while(caps.children.length>2)caps.removeChild(caps.lastChild);
-    const btn=document.getElementById('lc-0');
-    if(btn){
-      btn.classList.remove('captured');
-      [...btn.children].forEach(c=>{if(c.tagName==='IMG'||c.classList?.contains('cap-retake'))c.remove();else c.style.display='';});
-    }
-  }
-  document.getElementById('ledger-actions').style.display='none';
-  document.getElementById('ledger-skip-init').style.display='block';
-  document.getElementById('ledger-results').style.display='none';
-  document.getElementById('step2-nav').style.display='none';
-  const dbg=document.getElementById('ocr-debug');if(dbg)dbg.style.display='none';
-  allStudents=[];classGroups={};ledgerPageCount=1;
-  alert('Tips for a clearer photo:\n\n• Hold phone steady, 30-40cm above the ledger\n• Ensure good lighting — near a window if possible\n• The page should fill most of the frame\n• Avoid shadows on the writing');
-}
-
-// ── Request Access ────────────────────────────────────────────────────────
-function requestAccess(){
-  const name  = ($('req-name')?.value||'').trim();
-  const phone = ($('l-phone')?.value||'').trim();
-  const area  = ($('req-area')?.value||'').trim();
-  if(!name){alert('Enter your full name first.');return;}
-  const msg =
-    `Hi Bayo, I would like to be registered as an EduBloom agent.\n\n` +
-    `*Name:* ${name}\n` +
-    `*Phone:* ${phone||'(see this number)'}\n` +
-    `*Area/Zone:* ${area||'Not specified'}\n\n` +
-    `Please add me to the agent app. Thank you!`;
-  window.open(`https://wa.me/2348145073941?text=${encodeURIComponent(msg)}`,'_blank');
-}
-
 // ── Firebase ───────────────────────────────────────────────────────────────
 const FB={apiKey:"AIzaSyCVEdunn3AZndDP5Rm1Z3Kv1e6G6W2mB_o",authDomain:"educationbloom-699ed.firebaseapp.com",projectId:"educationbloom-699ed",storageBucket:"educationbloom-699ed.firebasestorage.app",messagingSenderId:"33750392965",appId:"1:33750392965:web:2b3da887ede996ea8389ec"};
 let db=null;
@@ -47,17 +8,17 @@ try{
 }catch(e){console.warn('Firebase:',e);}
 
 // ── State ──────────────────────────────────────────────────────────────────
-let agent=null,apiKeys=null,currentTab='wizard',currentStep=1;
+let agent=null,apiKeys=null,currentTab='wizard';
 let timerSec=0,timerInterval=null;
-let ledgerPageCount=1,ledgerImages={};  // {0: dataUrl, 1: dataUrl, ...}
+let ledgerPageCount=1,ledgerImages={};
 let allStudents=[],classGroups={},selTier=null;
 
 // ── Tiers ──────────────────────────────────────────────────────────────────
 const TIERS=[
-  {max:50,   price:10000, name:'Starter (1–50)'},
-  {max:100,  price:20000, name:'Small (51–100)'},
-  {max:200,  price:35000, name:'Medium (101–200)'},
-  {max:350,  price:55000, name:'Large (201–350)'},
+  {max:50,   price:10000, name:'Starter (1-50)'},
+  {max:100,  price:20000, name:'Small (51-100)'},
+  {max:200,  price:35000, name:'Medium (101-200)'},
+  {max:350,  price:55000, name:'Large (201-350)'},
   {max:9999, price:75000, name:'Enterprise (351+)'}
 ];
 const getTier=n=>TIERS.find(t=>n<=t.max)||TIERS[TIERS.length-1];
@@ -103,9 +64,12 @@ function startTimer(){
     const el=$('timerDisplay');if(el)el.textContent=m+':'+s;
   },1000);
 }
-function timerText(){const m=Math.floor(timerSec/60);const s=timerSec%60;return m>0?`${m}m ${s}s`:`${s}s`;}
+function timerText(){const m=Math.floor(timerSec/60);const s=timerSec%60;return m>0?m+'m '+s+'s':s+'s';}
 
-// ── Login ──────────────────────────────────────────────────────────────────
+// ── Login — OPEN ACCESS ────────────────────────────────────────────────────
+// Any valid Nigerian phone can enter. Firestore agent record is fetched
+// silently in background — if not found, a guest profile is created.
+// No agent is ever blocked from submitting a deal.
 function normPhone(raw){
   let p=raw.trim().replace(/\D/g,'');
   if(p.startsWith('0')&&p.length===11)return'234'+p.slice(1);
@@ -121,6 +85,7 @@ async function doLogin(){
   if(phone.length<10){showE(err,'Enter your WhatsApp number — e.g. 08038740131');return;}
   btn.textContent='Checking...';btn.disabled=true;
 
+  // 1. Check cached session
   const cached=localStorage.getItem('ag2_agent');
   if(cached){
     try{
@@ -133,20 +98,29 @@ async function doLogin(){
       }
     }catch(e){localStorage.removeItem('ag2_agent');}
   }
-  if(!db){showE(err,'No database connection.');btn.textContent='▶ Login';btn.disabled=false;return;}
-  try{
-    const[s1,s2]=await Promise.all([
-      db.collection('admin_agents').where('phone','==',phone).get(),
-      db.collection('admin_agents').where('phone','==',localFmt).get()
-    ]);
-    const seen=new Set();
-    const docs=[...s1.docs,...s2.docs].filter(d=>{if(seen.has(d.id))return false;seen.add(d.id);return true;});
-    if(!docs.length){showE(err,'Number not registered. Fill in the form below to request access.');
-    const rb=$('req-access-box');if(rb)rb.style.display='block';btn.textContent='▶ Login';btn.disabled=false;return;}
-    agent={id:docs[0].id,...docs[0].data()};
-    localStorage.setItem('ag2_agent',JSON.stringify(agent));
-    startApp();
-  }catch(e){showE(err,'Login failed: '+(e.message||'Unknown error'));}
+
+  // 2. Try Firestore — but NEVER block access if not found
+  if(db){
+    try{
+      const[s1,s2]=await Promise.all([
+        db.collection('admin_agents').where('phone','==',phone).get(),
+        db.collection('admin_agents').where('phone','==',localFmt).get()
+      ]);
+      const seen=new Set();
+      const docs=[...s1.docs,...s2.docs].filter(d=>{if(seen.has(d.id))return false;seen.add(d.id);return true;});
+      if(docs.length){
+        agent={id:docs[0].id,...docs[0].data()};
+        localStorage.setItem('ag2_agent',JSON.stringify(agent));
+        startApp();btn.textContent='▶ Login';btn.disabled=false;
+        return;
+      }
+    }catch(e){console.warn('DB lookup:',e.message);}
+  }
+
+  // 3. Not in DB — create guest profile and let them in anyway
+  agent={id:'guest_'+phone,name:'Agent ('+localFmt+')',phone:localFmt,commission:20,_guest:true};
+  localStorage.setItem('ag2_agent',JSON.stringify(agent));
+  startApp();
   btn.textContent='▶ Login';btn.disabled=false;
 }
 
@@ -158,6 +132,16 @@ async function refreshBg(agentId,phone,localFmt){
     localStorage.setItem('ag2_agent',JSON.stringify(fresh));
     if(agent&&agent.id===fresh.id)agent=fresh;
   }catch(e){}
+}
+
+// ── Request Access (shown in login when phone not in DB — optional) ─────────
+function requestAccess(){
+  const name=(gv('req-name')||'').trim();
+  const phone=(gv('l-phone')||'').trim();
+  const area=(gv('req-area')||'').trim();
+  if(!name){alert('Enter your full name first.');return;}
+  const msg='Hi Bayo, I would like to be an EduBloom agent.\n\nName: '+name+'\nPhone: '+phone+'\nArea: '+(area||'Not specified')+'\n\nPlease register me. Thank you!';
+  window.open('https://wa.me/2348145073941?text='+encodeURIComponent(msg),'_blank');
 }
 
 function showE(el,msg){el.textContent=msg;el.style.display='block';}
@@ -177,7 +161,7 @@ async function _getApiKeys(){
   if(apiKeys)return apiKeys;
   if(!db)throw new Error('No DB');
   const doc=await db.collection('admin_settings').doc('main').get();
-  if(!doc.exists)throw new Error('No settings');
+  if(!doc.exists)throw new Error('No settings doc');
   const d=doc.data();
   apiKeys={groq:d.groqApiKey||'',hf:d.hfApiKey||''};
   return apiKeys;
@@ -206,7 +190,6 @@ function goStep(n){
     else if(i===n){dot.classList.add('active');dot.textContent=i;if(item)item.classList.add('active');}
     else{dot.textContent=i;if(line)line.classList.remove('done');}
   }
-  currentStep=n;
   if(n===3)populatePitch();
   if(n===4)populateReview();
   window.scrollTo({top:0,behavior:'smooth'});
@@ -235,8 +218,7 @@ function markCaptured(id,url){
   const img=document.createElement('img');
   img.src=url;img.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:12px;opacity:.8;';
   el.insertBefore(img,el.firstChild);
-  const rb=document.createElement('button');
-  rb.className='cap-retake';rb.textContent='↺ Retake';
+  const rb=document.createElement('button');rb.className='cap-retake';rb.textContent='↺ Retake';
   rb.onclick=e=>{e.stopPropagation();el.classList.remove('captured');[...el.children].filter(c=>c.tagName!=='INPUT'&&c!==rb).forEach(c=>{if(c.tagName==='IMG')c.remove();else c.style.display='';});rb.remove();};
   el.appendChild(rb);
 }
@@ -247,15 +229,12 @@ async function processSignboard(file,dataUrl){
   status.textContent='Compressing image...';prog.style.width='10%';
   try{
     const keys=await _getApiKeys();
-    if(!keys.groq)throw new Error('No Groq API key. Add it in the admin portal Settings tab.');
+    if(!keys.groq)throw new Error('No Groq API key — add it in portal Settings');
     const compressed=await compressImage(dataUrl,800);
     prog.style.width='30%';status.textContent='AI reading signboard...';
-    const prompt=`You are reading a Nigerian school signboard photo. Extract the school name, address, LGA, and state.
-Return valid JSON ONLY — no markdown, no explanation, nothing else:
-{"name":"SCHOOL NAME","address":"full address","lga":"LGA name","state":"State name"}
-If a field is unclear use empty string "".`;
+    const prompt='You are reading a Nigerian school signboard. Extract school name, full address, LGA, state.\nReturn JSON ONLY:\n{"name":"SCHOOL NAME","address":"full address","lga":"LGA","state":"State"}\nEmpty string if unclear.';
     const result=await callGroqVision(compressed,prompt,keys.groq);
-    prog.style.width='80%';status.textContent='Extracting details...';
+    prog.style.width='80%';
     let parsed={};
     try{parsed=JSON.parse(result.replace(/```json|```/g,'').trim());}
     catch(e){const m=result.match(/\{[^}]+\}/);if(m)try{parsed=JSON.parse(m[0]);}catch(e2){}}
@@ -265,19 +244,19 @@ If a field is unclear use empty string "".`;
     if(parsed.lga)$('f-lga').value=parsed.lga;
     const filled=[parsed.name,parsed.address,parsed.state,parsed.lga].filter(Boolean).length;
     const hint=$('ai-hint-sign');
-    if(hint){hint.textContent=`✨ AI filled ${filled} of 4 fields from signboard`;hint.style.display='block';}
+    if(hint){hint.textContent='✨ AI filled '+filled+' of 4 fields from signboard';hint.style.display='block';}
     prog.style.width='100%';status.textContent='Done!';
     setTimeout(()=>{$('sign-proc').style.display='none';$('school-fields').style.display='block';$('terms-card').style.display='block';$('btn-step1-next').style.display='block';},500);
   }catch(e){
-    status.textContent='⚠️ '+(e.message||'Error')+' — fill in manually below';
-    prog.style.width='100%';prog.style.background='var(--danger)';
+    status.textContent='⚠️ '+(e.message||'Error')+' — fill manually below';
+    prog.style.width='100%';
     setTimeout(()=>{$('sign-proc').style.display='none';$('school-fields').style.display='block';$('terms-card').style.display='block';$('btn-step1-next').style.display='block';},1500);
   }
 }
 
 function validateStep1(){
   if(!gv('f-school-name')){alert('Enter the school name.');return;}
-  if(!gv('f-phone')){alert('Enter the principal\'s WhatsApp number.');return;}
+  if(!gv('f-phone')){alert('Enter the principal phone number.');return;}
   goStep(2);
 }
 
@@ -288,7 +267,9 @@ function addLedgerPage(){
   const wrap=document.createElement('div');wrap.style.marginTop='.5rem';
   const btn=document.createElement('div');
   btn.className='cap-btn';btn.id='lc-'+idx;btn.onclick=()=>captureLedger(idx);
-  btn.innerHTML=`<div class="cap-icon">📖</div><div class="cap-lbl">📷 Camera  ·  🖼️ Gallery — Page ${idx+1}</div>`;
+  const icon=document.createElement('div');icon.className='cap-icon';icon.textContent='📖';
+  const lbl=document.createElement('div');lbl.className='cap-lbl';lbl.textContent='📷 Camera · 🖼️ Gallery — Page '+(idx+1);
+  btn.appendChild(icon);btn.appendChild(lbl);
   const inp=document.createElement('input');
   inp.type='file';inp.accept='image/*';inp.id='li-'+idx;inp.style.display='none';
   btn.appendChild(inp);
@@ -323,70 +304,60 @@ async function processAllLedgers(){
   prog.style.width='5%';
 
   let keys;
-  try{keys=await _getApiKeys();if(!keys.groq)throw new Error('No Groq API key. Add it in the portal Settings tab.');}
+  try{keys=await _getApiKeys();if(!keys.groq)throw new Error('No Groq API key — add it in portal Settings tab.');}
   catch(e){status.textContent='❌ '+e.message;return;}
 
   allStudents=[];classGroups={};
 
-  const prompt`You are an expert at reading Nigerian handwritten school fee registers.
-This image shows a handwritten fee register. Student names are written in rows.
-
-YOUR TASK: Extract EVERY student name you can see. Be aggressive — if you can read 2+ letters that look like part of a name, include it. Do NOT return empty results.
-
-Return valid JSON ONLY — no markdown, no explanation:
-{"students":[{"name":"SURNAME FIRSTNAME","class":"BASIC 4","balance":0,"termFees":28000,"paid":28000,"status":"FULLY PAID"}]}
-
-Field rules:
-- name: Nigerian surname first, ALL CAPS. Include even if only partially legible.
-- class: the class visible on this page e.g. "BASIC 4", "JSS 2", "NURSERY 1", "PRIMARY 3". Use "UNKNOWN" if unclear.
-- balance: carry-over amount owed (integer, 0 if none)
-- termFees: this term fees (integer, 0 if unclear)
-- paid: amount paid (integer, 0 if none)
-- status: exactly one of "FULLY PAID", "PART PAID", "OWING"
-
-Common Nigerian surnames: ADEYEMI, OKONKWO, IBRAHIM, AFOLABI, GBADAMOSI, OLUWASEUN, BALOGUN, NWACHUKWU, ABDULLAHI
-Read carefully. Return every row that has a name, even partial names.;
+  // Prompt built without template literals to avoid escaping issues
+  const ledgerPrompt=[
+    'You are an expert at reading Nigerian handwritten school fee registers.',
+    'This image shows a handwritten fee register with student names in rows.',
+    '',
+    'YOUR TASK: Extract EVERY student name you can see.',
+    'Be very aggressive — if you can read 2 or more letters that look like a name, include it.',
+    'Do NOT return an empty students array. Nigerian ledgers always have names.',
+    '',
+    'Return valid JSON ONLY — no markdown, no explanation:',
+    '{"students":[{"name":"SURNAME FIRSTNAME","class":"BASIC 4","balance":0,"termFees":28000,"paid":28000,"status":"FULLY PAID"}]}',
+    '',
+    'Rules:',
+    '- name: surname first, ALL CAPS, letters and spaces only. Include even partial names.',
+    '- class: e.g. "BASIC 4", "JSS 2", "NURSERY 1", "PRIMARY 3". Use "UNKNOWN" if not visible.',
+    '- balance: carry-over owed (integer, 0 if none)',
+    '- termFees: this term fees (integer, 0 if unclear)',
+    '- paid: amount paid (integer, 0 if none)',
+    '- status: exactly "FULLY PAID", "PART PAID", or "OWING"',
+    '',
+    'Common Nigerian names: ADEYEMI IBRAHIM OKONKWO BALOGUN AFOLABI GBADAMOSI NWACHUKWU ABDULLAHI',
+    'Read every row. Return all names you can see.'
+  ].join('\n');
 
   for(let i=0;i<images.length;i++){
     const[idx,url]=images[i];
     prog.style.width=Math.round((i/images.length)*85)+'%';
-    status.textContent=`Reading page ${parseInt(idx)+1} of ${images.length}...`;
+    status.textContent='Reading page '+(parseInt(idx)+1)+' of '+images.length+'...';
     try{
       const compressed=await compressLedger(url);
-      const result=await callGroqVision(compressed,prompt,keys.groq);
+      const result=await callGroqVision(compressed,ledgerPrompt,keys.groq);
+      console.log('[v2] Groq raw (page '+(parseInt(idx)+1)+'):', result.slice(0,400));
+
       let parsed={students:[]};
-      try{parsed=JSON.parse(result.replace(/```json|```/g,'').trim());}
-      catch(e){parsed={students:fallbackExtract(result)};}
-      
-      // If JSON returned 0 students, try a simpler name-only prompt
-      if((!parsed.students||!parsed.students.length)&&keys.groq){
-        console.log('[v2] Primary prompt returned 0. Trying name-only fallback...');
-        try{
-          const fallbackPrompt=`Look at this handwritten Nigerian school register.
-List every person's name you can see, one per line, surname first in CAPS.
-Example output:
-ADEYEMI SAMUEL
-IBRAHIM FATIMA
-OKONKWO CHIOMA
-Only output names, nothing else.`;
-          const result2=await callGroqVision(compressed,fallbackPrompt,keys.groq);
-          console.log('[v2] Fallback raw:',result2.slice(0,300));
-          const names=result2.split(/
-/).map(l=>l.trim()).filter(l=>l.length>2&&/[A-Za-z]{2,}/.test(l)&&!/^\d+$/.test(l));
-          parsed={students:names.map(n=>({name:n.toUpperCase().replace(/[^A-Z\s'\-\.]/g,'').trim(),class:'UNKNOWN',balance:0,termFees:0,paid:0,status:'OWING'})).filter(s=>s.name.length>2)};
-          console.log('[v2] Fallback found:',parsed.students.length,'names');
-        }catch(e2){console.warn('[v2] Fallback also failed:',e2.message);}
+      try{
+        const clean=result.replace(/```json[\s\S]*?```/g,m=>m).replace(/```/g,'').trim();
+        parsed=JSON.parse(clean);
+      }catch(e){
+        // JSON failed — extract names from raw text
+        parsed={students:fallbackExtract(result)};
+        console.log('[v2] JSON parse failed, fallback extracted:',parsed.students.length);
       }
-      
-      // Store raw result for debug
-      window._lastGroqRaw = result;
-      console.log('[v2] Groq raw response:',result.slice(0,500));
-      
+
       const students=parsed.students||[];
+      console.log('[v2] Students from page '+(parseInt(idx)+1)+':',students.length);
       const seenNames=new Set(allStudents.map(s=>s.name.toLowerCase().replace(/[^a-z]/g,'')));
       students.forEach(s=>{
         if(!s.name||s.name.length<2)return;
-        s.name=s.name.toUpperCase().replace(/[^A-Z\s'\-\.]/g,'').replace(/\s+/g,' ').trim();
+        s.name=s.name.toUpperCase().replace(/[^A-Z\s'\-.]/g,'').replace(/\s+/g,' ').trim();
         if(!s.name||s.name.length<2)return;
         const key=s.name.toLowerCase().replace(/[^a-z]/g,'');
         if(seenNames.has(key))return;
@@ -395,49 +366,50 @@ Only output names, nothing else.`;
         allStudents.push(s);
         addLiveItem(liveContent,s);
       });
-      // Cooldown: 15s after pages 1-3 to respect Groq 6000 TPM
+
+      // 15s cooldown between pages (Groq 6000 TPM limit)
       if(i<images.length-1){
-        const cd=i<2?15000:5000;
-        for(let t=cd;t>0;t-=1000){
-          status.textContent=`Page ${parseInt(idx)+1} done · Next page in ${Math.round(t/1000)}s...`;
+        for(let t=15;t>0;t--){
+          status.textContent='Page '+(parseInt(idx)+1)+' done. Next in '+t+'s...';
           await sleep(1000);
         }
       }
     }catch(e){
-      console.warn('Page '+idx+' failed:',e.message);
-      status.textContent=`Page ${parseInt(idx)+1} error: ${e.message} — skipping`;
+      console.warn('[v2] Page '+idx+' error:',e.message);
+      status.textContent='Page '+(parseInt(idx)+1)+' error: '+e.message;
       await sleep(2000);
     }
   }
 
-  // Group by class
   allStudents.forEach(s=>{
-    const cls=(s.class||'UNASSIGNED').toUpperCase().trim();
+    const cls=(s.class||'UNKNOWN').toUpperCase().trim();
     if(!classGroups[cls])classGroups[cls]=[];
     classGroups[cls].push(s);
   });
 
   selTier=getTier(allStudents.length);
   prog.style.width='100%';
-  status.textContent=`✅ Done — ${allStudents.length} students found`;
+  status.textContent='Done — '+allStudents.length+' students found';
   setTimeout(()=>{$('ledger-proc').style.display='none';showLedgerResults();},800);
 }
 
 function calcConf(s){
   let c=50;
   if(s.name&&s.name.length>8)c+=20;
-  if(s.class&&s.class.length>2)c+=15;
+  if(s.class&&s.class!=='UNKNOWN')c+=15;
   if((s.termFees||0)>0)c+=10;
   if((s.paid||0)>0)c+=5;
   return Math.min(99,c);
 }
 
 function addLiveItem(container,s){
-  const div=document.createElement('div');
-  div.className='live-item';
+  const div=document.createElement('div');div.className='live-item';
   const conf=s.confidence||50;
   const col=conf>80?'var(--money)':conf>60?'var(--warn)':'var(--danger)';
-  div.innerHTML=`<div class="live-dot" style="background:${col};"></div><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem;">${esc(s.name)}</span><span style="font-size:.65rem;color:var(--sub);flex-shrink:0;">${esc(s.class||'?')}</span>`;
+  const dot=document.createElement('div');dot.className='live-dot';dot.style.background=col;
+  const nm=document.createElement('span');nm.style.cssText='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem;';nm.textContent=s.name;
+  const cl=document.createElement('span');cl.style.cssText='font-size:.65rem;color:var(--sub);flex-shrink:0;';cl.textContent=s.class||'?';
+  div.appendChild(dot);div.appendChild(nm);div.appendChild(cl);
   container.appendChild(div);
   container.scrollTop=container.scrollHeight;
 }
@@ -448,15 +420,6 @@ function showLedgerResults(){
   $('as-classes').textContent=Object.keys(classGroups).length;
   const avgConf=allStudents.length>0?Math.round(allStudents.reduce((s,r)=>s+(r.confidence||50),0)/allStudents.length):0;
   $('as-conf').textContent=avgConf+'%';
-  // Show debug info if 0 students
-  if(!allStudents.length){
-    const dbg=document.getElementById('ocr-debug');
-    if(dbg){
-      const raw=window._lastGroqRaw||'(no response stored)';
-      dbg.style.display='block';
-      dbg.innerHTML=`<div style="font-size:.7rem;font-weight:700;color:var(--warn);margin-bottom:.3rem;">⚠️ 0 students extracted. Groq raw response (first 400 chars):</div><div style="font-size:.65rem;color:var(--sub);background:var(--s1);padding:.5rem;border-radius:6px;overflow-wrap:break-word;white-space:pre-wrap;">${esc(raw.slice(0,400))}</div><button onclick="retryWithBetterImage()" style="background:var(--brand);color:#fff;border:none;border-radius:8px;padding:.4rem .8rem;font-size:.74rem;cursor:pointer;margin-top:.4rem;font-weight:700;">📸 Retake clearer photo & retry</button>`;
-    }
-  }
 
   const groupsEl=$('class-groups');groupsEl.innerHTML='';
   for(const[cls,students]of Object.entries(classGroups)){
@@ -467,16 +430,27 @@ function showLedgerResults(){
     const rows=students.map((s,i)=>{
       const conf=s.confidence||50;
       const bc=conf>80?'var(--money)':conf>60?'var(--warn)':'var(--danger)';
-      return`<div class="stu-row"><span style="color:var(--sub);font-size:.68rem;width:18px;text-align:right;flex-shrink:0;">${i+1}</span><input class="stu-inp" value="${esc(s.name)}" onchange="fixName('${esc(cls)}',${i},this.value)"><span style="font-size:.62rem;color:var(--sub);width:55px;text-align:right;flex-shrink:0;">${s.status||'—'}</span><div class="conf-bg"><div class="conf-bar" style="width:${conf}%;background:${bc};"></div></div></div>`;
+      return '<div class="stu-row"><span style="color:var(--sub);font-size:.68rem;width:18px;text-align:right;flex-shrink:0;">'+(i+1)+'</span><input class="stu-inp" value="'+esc(s.name)+'" onchange="fixName(\''+esc(cls)+'\','+i+',this.value)"><span style="font-size:.62rem;color:var(--sub);width:55px;text-align:right;flex-shrink:0;">'+(s.status||'—')+'</span><div class="conf-bg"><div class="conf-bar" style="width:'+conf+'%;background:'+bc+';"></div></div></div>';
     }).join('');
-    div.innerHTML=`<div class="class-hdr"><div style="display:flex;align-items:center;gap:5px;"><span class="class-name">${esc(cls)}</span><span class="badge bb">${students.length}</span></div><div style="display:flex;gap:3px;">${paid?`<span class="badge bg">${paid}✓</span>`:''} ${part?`<span class="badge ba">${part}½</span>`:''} ${owing?`<span class="badge br">${owing}✗</span>`:''}</div></div><div class="cbar-bg"><div class="cbar-paid" style="width:${(paid/students.length)*100}%;"></div><div class="cbar-part" style="width:${(part/students.length)*100}%;"></div></div><div style="max-height:190px;overflow-y:auto;margin-top:6px;">${rows}</div>`;
+    const paidPct=Math.round((paid/students.length)*100);
+    const partPct=Math.round((part/students.length)*100);
+    div.innerHTML='<div class="class-hdr"><div style="display:flex;align-items:center;gap:5px;"><span class="class-name">'+esc(cls)+'</span><span class="badge bb">'+students.length+'</span></div><div style="display:flex;gap:3px;">'+(paid?'<span class="badge bg">'+paid+'✓</span>':'')+(part?'<span class="badge ba">'+part+'½</span>':'')+(owing?'<span class="badge br">'+owing+'✗</span>':'')+'</div></div><div class="cbar-bg"><div class="cbar-paid" style="width:'+paidPct+'%;"></div><div class="cbar-part" style="width:'+partPct+'%;"></div></div><div style="max-height:190px;overflow-y:auto;margin-top:6px;">'+rows+'</div>';
     groupsEl.appendChild(div);
   }
 
-  // Auto-tier suggestion
   if(selTier){
     const comm=Math.round(selTier.price*(agent.commission||20)/100);
-    $('tier-auto-card').innerHTML=`<div class="card"><div class="ct">💡 Auto-selected Plan</div><p style="font-size:.74rem;color:var(--sub);margin-bottom:.4rem;">Based on ${allStudents.length} students scanned</p><div style="background:rgba(37,99,235,.1);border:1px solid rgba(37,99,235,.3);border-radius:10px;padding:.65rem;"><div style="font-weight:800;">${esc(selTier.name)}</div><div style="color:var(--money);font-weight:700;">${fmt(selTier.price)}/term</div><div style="font-size:.7rem;color:var(--sub);margin-top:3px;">Your commission: <strong style="color:var(--money);">${fmt(comm)}</strong></div></div><label style="margin-top:.5rem;">Change plan (optional)</label><select id="tier-override" onchange="overrideTier(this.value)">${TIERS.map(t=>`<option value="${t.max}" ${t.max===selTier.max?'selected':''}>${t.name} — ${fmt(t.price)}/term</option>`).join('')}</select></div>`;
+    const tc=$('tier-auto-card');
+    if(tc)tc.innerHTML='<div class="card"><div class="ct">💡 Auto-selected Plan</div><p style="font-size:.74rem;color:var(--sub);margin-bottom:.4rem;">Based on '+allStudents.length+' students scanned</p><div style="background:rgba(37,99,235,.1);border:1px solid rgba(37,99,235,.3);border-radius:10px;padding:.65rem;"><div style="font-weight:800;">'+esc(selTier.name)+'</div><div style="color:var(--money);font-weight:700;">'+fmt(selTier.price)+'/term</div><div style="font-size:.7rem;color:var(--sub);margin-top:3px;">Your commission: <strong style="color:var(--money);">'+fmt(comm)+'</strong></div></div><label style="margin-top:.5rem;">Change plan (optional)</label><select id="tier-override" onchange="overrideTier(this.value)">'+TIERS.map(t=>'<option value="'+t.max+'"'+(t.max===selTier.max?' selected':'')+'>'+t.name+' — '+fmt(t.price)+'/term</option>').join('')+'</select></div>';
+  }
+
+  // Show debug info if 0 students
+  if(!allStudents.length){
+    const dbg=$('ocr-debug');
+    if(dbg){
+      dbg.style.display='block';
+      dbg.innerHTML='<div style="font-size:.72rem;font-weight:700;color:var(--warn);margin-bottom:.3rem;">⚠️ 0 students found. Check Brave console for Groq response.</div><div style="font-size:.7rem;color:var(--sub);">Tips: ensure good lighting, hold phone flat above ledger, page fills the frame.</div><button onclick="retryLedger()" style="background:var(--brand);color:#fff;border:none;border-radius:8px;padding:.4rem .8rem;font-size:.74rem;cursor:pointer;margin-top:.4rem;font-weight:700;">📸 Retake & retry</button>';
+    }
   }
 
   $('step2-nav').style.display='block';
@@ -484,14 +458,27 @@ function showLedgerResults(){
 
 function fixName(cls,idx,val){
   if(classGroups[cls]&&classGroups[cls][idx]){
-    const s=classGroups[cls][idx];
-    s.name=val.toUpperCase().trim();
-    const ai=allStudents.findIndex(x=>x===s);
-    if(ai>=0)allStudents[ai].name=s.name;
+    const s=classGroups[cls][idx];s.name=val.toUpperCase().trim();
+    const ai=allStudents.findIndex(x=>x===s);if(ai>=0)allStudents[ai].name=s.name;
   }
 }
 
 function overrideTier(maxStr){selTier=TIERS.find(t=>t.max===parseInt(maxStr))||selTier;}
+
+function retryLedger(){
+  ledgerImages={};ledgerPageCount=1;allStudents=[];classGroups={};
+  const caps=$('ledger-caps');
+  if(caps){
+    while(caps.children.length>2)caps.removeChild(caps.lastChild);
+    const btn=$('lc-0');
+    if(btn){btn.classList.remove('captured');[...btn.children].forEach(c=>{if(c.tagName==='IMG'||c.classList?.contains('cap-retake'))c.remove();else c.style.display='';});}
+  }
+  $('ledger-actions').style.display='none';
+  $('ledger-skip-init').style.display='block';
+  $('ledger-results').style.display='none';
+  $('step2-nav').style.display='none';
+  const dbg=$('ocr-debug');if(dbg)dbg.style.display='none';
+}
 
 // ── Step 3: Pitch ──────────────────────────────────────────────────────────
 function populatePitch(){
@@ -507,42 +494,38 @@ function populatePitch(){
   const owingCnt=allStudents.filter(s=>s.status==='OWING'||s.status==='PART PAID').length;
   $('p-rate').textContent=rate+'%';
   $('p-outstanding').textContent=fmt(outstanding);
-  $('p-owing-txt').textContent=`${owingCnt} student${owingCnt!==1?'s':''} with outstanding fees`;
+  $('p-owing-txt').textContent=owingCnt+' student'+(owingCnt!==1?'s':'')+' with outstanding fees';
   const barsEl=$('pitch-bars');barsEl.innerHTML='';
   for(const[cls,students]of Object.entries(classGroups)){
     const paid=students.filter(s=>s.status==='FULLY PAID').length;
     const part=students.filter(s=>s.status==='PART PAID').length;
     const div=document.createElement('div');div.className='card';div.style.padding='.7rem';
-    div.innerHTML=`<div class="class-hdr" style="margin-bottom:5px;"><div style="display:flex;align-items:center;gap:5px;"><span class="class-name" style="font-size:.8rem;">${esc(cls)}</span><span class="badge bb">${students.length}</span></div><span style="font-size:.72rem;color:var(--sub);">${Math.round((paid/students.length)*100)}% paid</span></div><div class="cbar-bg"><div class="cbar-paid" style="width:${(paid/students.length)*100}%;"></div><div class="cbar-part" style="width:${(part/students.length)*100}%;"></div></div>`;
+    const paidPct=Math.round((paid/students.length)*100);
+    const partPct=Math.round((part/students.length)*100);
+    div.innerHTML='<div class="class-hdr" style="margin-bottom:5px;"><div style="display:flex;align-items:center;gap:5px;"><span class="class-name" style="font-size:.8rem;">'+esc(cls)+'</span><span class="badge bb">'+students.length+'</span></div><span style="font-size:.72rem;color:var(--sub);">'+paidPct+'% paid</span></div><div class="cbar-bg"><div class="cbar-paid" style="width:'+paidPct+'%;"></div><div class="cbar-part" style="width:'+partPct+'%;"></div></div>';
     barsEl.appendChild(div);
   }
 }
 
 let presenting=false;
-function togglePresent(){
-  presenting=!presenting;
-  document.body.classList.toggle('presenting',presenting);
-}
+function togglePresent(){presenting=!presenting;document.body.classList.toggle('presenting',presenting);}
 
 // ── Step 4: Review & Submit ────────────────────────────────────────────────
 function populateReview(){
   const name=gv('f-school-name')||'—';
   const loc=[gv('f-lga'),gv('f-state')].filter(Boolean).join(', ')||'—';
-  const principal=gv('f-principal')||'—';
-  const phone=gv('f-phone')||'—';
   const terms=parseInt($('f-terms')?.value)||1;
   const tier=selTier||getTier(allStudents.length);
   const total=tier.price*terms;
   const comm=Math.round(total*(agent.commission||20)/100);
-  $('review-rows').innerHTML=`<div class="rv-row"><span class="rv-l">School</span><span class="rv-v">${esc(name)}</span></div><div class="rv-row"><span class="rv-l">Location</span><span class="rv-v">${esc(loc)}</span></div><div class="rv-row"><span class="rv-l">Principal</span><span class="rv-v">${esc(principal)}</span></div><div class="rv-row"><span class="rv-l">WhatsApp</span><span class="rv-v">${esc(phone)}</span></div><div class="rv-row"><span class="rv-l">Students</span><span class="rv-v">${allStudents.length}</span></div><div class="rv-row"><span class="rv-l">Classes</span><span class="rv-v">${Object.keys(classGroups).length}</span></div><div class="rv-row"><span class="rv-l">Plan</span><span class="rv-v">${esc(tier.name)}</span></div><div class="rv-row"><span class="rv-l">Terms</span><span class="rv-v">${terms}</span></div><div class="rv-row"><span class="rv-l">Time</span><span class="rv-v">${timerText()}</span></div>`;
+  $('review-rows').innerHTML='<div class="rv-row"><span class="rv-l">School</span><span class="rv-v">'+esc(name)+'</span></div><div class="rv-row"><span class="rv-l">Location</span><span class="rv-v">'+esc(loc)+'</span></div><div class="rv-row"><span class="rv-l">Principal</span><span class="rv-v">'+esc(gv('f-principal')||'—')+'</span></div><div class="rv-row"><span class="rv-l">Phone</span><span class="rv-v">'+esc(gv('f-phone')||'—')+'</span></div><div class="rv-row"><span class="rv-l">Students</span><span class="rv-v">'+allStudents.length+'</span></div><div class="rv-row"><span class="rv-l">Classes</span><span class="rv-v">'+Object.keys(classGroups).length+'</span></div><div class="rv-row"><span class="rv-l">Plan</span><span class="rv-v">'+esc(tier.name)+'</span></div><div class="rv-row"><span class="rv-l">Terms</span><span class="rv-v">'+terms+'</span></div><div class="rv-row"><span class="rv-l">Onboarding time</span><span class="rv-v">'+timerText()+'</span></div>';
   $('tier-confirm-card').style.display='block';
-  $('tier-confirm-inner').innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem;background:rgba(37,99,235,.1);border-radius:10px;border:1px solid rgba(37,99,235,.3);"><div><div style="font-weight:800;">${esc(tier.name)}</div><div style="font-size:.7rem;color:var(--sub);">${terms} term${terms>1?'s':''} × ${fmt(tier.price)}</div></div><div style="text-align:right;"><div style="font-size:1.1rem;font-weight:800;color:var(--money);">${fmt(total)}</div><div style="font-size:.68rem;color:var(--sub);">school pays</div></div></div>`;
-  $('comm-preview').textContent=`Your commission: ${fmt(comm)}`;
+  $('tier-confirm-inner').innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem;background:rgba(37,99,235,.1);border-radius:10px;border:1px solid rgba(37,99,235,.3);"><div><div style="font-weight:800;">'+esc(tier.name)+'</div><div style="font-size:.7rem;color:var(--sub);">'+terms+' term'+(terms>1?'s':'')+' x '+fmt(tier.price)+'</div></div><div style="text-align:right;"><div style="font-size:1.1rem;font-weight:800;color:var(--money);">'+fmt(total)+'</div><div style="font-size:.68rem;color:var(--sub);">school pays</div></div></div>';
+  $('comm-preview').textContent='Your commission: '+fmt(comm);
 }
 
 async function submitDeal(){
-  const name=gv('f-school-name');
-  const phone=gv('f-phone').replace(/\D/g,'');
+  const name=gv('f-school-name');const phone=gv('f-phone').replace(/\D/g,'');
   const fb=$('submit-fb');
   if(!name){showFB(fb,'bad','Enter school name in Step 1.');return;}
   if(!phone||phone.length<10){showFB(fb,'bad','Enter principal WhatsApp in Step 1.');return;}
@@ -551,36 +534,22 @@ async function submitDeal(){
   const comm=Math.round(tier.price*terms*(agent.commission||20)/100);
   const deal={
     timestamp:new Date(),status:'pending',version:2,
-    agent:{id:agent.id,name:agent.name,phone:agent.phone,commission:agent.commission||20},
-    school:{
-      name,phone:normPhone(phone),email:gv('f-email'),
-      principalName:gv('f-principal'),
-      address:gv('f-address'),lga:gv('f-lga'),state:gv('f-state'),
-      studentCount:allStudents.length
-    },
-    tier:{name:tier.name,price:tier.price},terms,
-    onboardingTimeSec:timerSec,
-    // Full student dataset — the v2 differentiator
-    students:allStudents.map(s=>({
-      name:s.name,class:s.class||'',
-      totalFee:s.termFees||0,
-      paid:s.paid||0,
-      balance:s.balance||0,
-      status:s.status||'OWING',
-      phone:'',gender:''
-    })),
+    agent:{id:agent.id,name:agent.name,phone:agent.phone,commission:agent.commission||20,_guest:agent._guest||false},
+    school:{name,phone:normPhone(phone),email:gv('f-email'),principalName:gv('f-principal'),address:gv('f-address'),lga:gv('f-lga'),state:gv('f-state'),studentCount:allStudents.length},
+    tier:{name:tier.name,price:tier.price},terms,onboardingTimeSec:timerSec,
+    students:allStudents.map(s=>({name:s.name,class:s.class||'',totalFee:s.termFees||0,paid:s.paid||0,balance:s.balance||0,status:s.status||'OWING',phone:'',gender:''})),
     classBreakdown:Object.fromEntries(Object.entries(classGroups).map(([k,v])=>[k,v.length]))
   };
   const btn=$('btn-submit');btn.textContent='Submitting...';btn.disabled=true;
   try{
     if(db){await db.collection('v2_deals').add(deal);}
     else{SQ.push({t:'deal',d:deal});}
-    showFB(fb,'ok',`✅ "${name}" submitted with ${allStudents.length} students pre-loaded! Commission: ${fmt(comm)}`);
+    showFB(fb,'ok','✅ "'+name+'" submitted with '+allStudents.length+' students! Commission: '+fmt(comm));
     btn.textContent='✓ Submitted!';btn.style.background='var(--money)';
     clearInterval(timerInterval);
   }catch(e){
     SQ.push({t:'deal',d:deal});
-    showFB(fb,'ok',`📥 Saved offline — will reach Bayo on reconnect. Commission: ${fmt(comm)}`);
+    showFB(fb,'ok','📥 Saved offline — will reach Bayo when connected. Commission: '+fmt(comm));
     btn.textContent='📤 Submit';btn.disabled=false;
   }
 }
@@ -604,32 +573,26 @@ async function renderDeals(){
     const sc=d.status==='approved'?'bg':d.status==='rejected'?'br':'ba';
     const comm=Math.round((d.tier?.price||0)*(d.agent?.commission||20)/100*(d.terms||1));
     const ts=d.timestamp?.toDate?d.timestamp.toDate().toLocaleDateString('en-NG'):'just now';
-    return`<div class="card" style="margin-bottom:.6rem;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><span class="badge ${sc}">${(d.status||'pending').toUpperCase()}</span><span style="font-size:.68rem;color:var(--sub);">${ts}</span></div><div style="font-weight:700;font-size:.88rem;">${esc(d.school?.name)}</div><div style="font-size:.74rem;color:var(--sub);">${d.school?.studentCount||0} students · ${esc(d.tier?.name||'—')}</div><div style="font-size:.74rem;color:var(--sub);">${esc(d.school?.state||'')}${d.school?.lga?' · '+esc(d.school.lga):''}</div><div style="color:var(--money);font-weight:700;font-size:.8rem;margin-top:3px;">Commission: ${fmt(comm)}</div>${d.students?.length?`<div style="margin-top:4px;"><span class="badge bb">📊 ${d.students.length} students pre-loaded</span></div>`:''}</div>`;
+    return'<div class="card" style="margin-bottom:.6rem;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><span class="badge '+sc+'">'+(d.status||'pending').toUpperCase()+'</span><span style="font-size:.68rem;color:var(--sub);">'+ts+'</span></div><div style="font-weight:700;font-size:.88rem;">'+esc(d.school?.name)+'</div><div style="font-size:.74rem;color:var(--sub);">'+(d.school?.studentCount||0)+' students · '+esc(d.tier?.name||'—')+'</div><div style="color:var(--money);font-weight:700;font-size:.8rem;margin-top:3px;">Commission: '+fmt(comm)+'</div>'+(d.students?.length?'<div style="margin-top:4px;"><span class="badge bb">📊 '+d.students.length+' students pre-loaded</span></div>':'')+'</div>';
   }).join('');
 }
 
-
-// ── Ledger-specific compression — higher res + contrast for handwriting ───
+// ── Image Utilities ────────────────────────────────────────────────────────
 async function compressLedger(dataUrl){
   return new Promise((resolve,reject)=>{
     const img=new Image();
     img.onload=()=>{
       let w=img.naturalWidth||img.width||1000;
       let h=img.naturalHeight||img.height||750;
-      // Keep larger for ledgers — handwriting needs resolution
-      const maxW=1200;
-      const scale=Math.min(1,maxW/w);
+      const scale=Math.min(1,1200/w);
       w=Math.round(w*scale);h=Math.round(h*scale);
       const cv=document.createElement('canvas');cv.width=w;cv.height=h;
       const cx=cv.getContext('2d');
-      // Draw base image
       cx.drawImage(img,0,0,w,h);
       // Pixel-level contrast boost for handwriting
       const id=cx.getImageData(0,0,w,h);const d=id.data;
       for(let i=0;i<d.length;i+=4){
-        // Convert to grayscale first
         const gray=d[i]*.299+d[i+1]*.587+d[i+2]*.114;
-        // Apply contrast stretch: dark pixels darker, bright pixels brighter
         const c=Math.max(0,Math.min(255,(gray-128)*1.6+128+10));
         d[i]=c;d[i+1]=c;d[i+2]=c;
       }
@@ -640,35 +603,12 @@ async function compressLedger(dataUrl){
   });
 }
 
-// ── OCR Utilities ──────────────────────────────────────────────────────────
-async function callGroqVision(imageDataUrl,prompt,apiKey){
-  const base64=imageDataUrl.split(',')[1];
-  const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
-  const resp=await fetch('https://api.groq.com/openai/v1/chat/completions',{
-    method:'POST',
-    headers:{'Authorization':`Bearer ${apiKey}`,'Content-Type':'application/json'},
-    body:JSON.stringify({
-      model:'qwen/qwen3.6-27b',
-      max_tokens:3000,temperature:0.2,
-      reasoning_format:'hidden',
-      messages:[{role:'user',content:[
-        {type:'image_url',image_url:{url:`data:${mimeType};base64,${base64}`}},
-        {type:'text',text:prompt}
-      ]}]
-    })
-  });
-  if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.error?.message||`Groq ${resp.status}`);}
-  const data=await resp.json();
-  let text=data.choices?.[0]?.message?.content||'';
-  text=text.replace(/<think>[\s\S]*?<\/think>/g,'').trim();
-  return text;
-}
-
 async function compressImage(dataUrl,maxW){
   return new Promise((resolve,reject)=>{
     const img=new Image();
     img.onload=()=>{
-      let w=img.naturalWidth||img.width||800,h=img.naturalHeight||img.height||600;
+      let w=img.naturalWidth||img.width||800;
+      let h=img.naturalHeight||img.height||600;
       const scale=maxW?Math.min(1,maxW/w):1;
       w=Math.round(w*scale);h=Math.round(h*scale);
       const cv=document.createElement('canvas');cv.width=w;cv.height=h;
@@ -681,6 +621,29 @@ async function compressImage(dataUrl,maxW){
   });
 }
 
+async function callGroqVision(imageDataUrl,prompt,apiKey){
+  const base64=imageDataUrl.split(',')[1];
+  const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
+  const resp=await fetch('https://api.groq.com/openai/v1/chat/completions',{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
+    body:JSON.stringify({
+      model:'qwen/qwen3.6-27b',
+      max_tokens:3000,temperature:0.2,
+      reasoning_format:'hidden',
+      messages:[{role:'user',content:[
+        {type:'image_url',image_url:{url:'data:'+mimeType+';base64,'+base64}},
+        {type:'text',text:prompt}
+      ]}]
+    })
+  });
+  if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.error?.message||'Groq '+resp.status);}
+  const data=await resp.json();
+  let text=data.choices?.[0]?.message?.content||'';
+  text=text.replace(/<think>[\s\S]*?<\/think>/g,'').trim();
+  return text;
+}
+
 function fileToDataUrl(file){
   return new Promise((resolve,reject)=>{
     const r=new FileReader();r.onload=e=>resolve(e.target.result);r.onerror=reject;r.readAsDataURL(file);
@@ -688,18 +651,17 @@ function fileToDataUrl(file){
 }
 
 function fallbackExtract(text){
-  // Called if Groq returns prose instead of JSON
-  const lines=text.split(/\n/).map(l=>l.trim()).filter(Boolean);
+  const lines=text.split('\n').map(l=>l.trim()).filter(Boolean);
   const students=[];const seen=new Set();
   lines.forEach(line=>{
-    if(/^\d+$/.test(line)||line.length<3||line.length>60)return;
+    if(line.length<3||line.length>60)return;
     if(/TOTAL|BALANCE|FEES|TERM|DATE|RECEIPT|LEDGER|SERIAL|SCHOOL|PAGE/i.test(line))return;
-    const name=line.replace(/^\d+[\.\)]\s*/,'').replace(/[^A-Za-z\s'\-\.]/g,'').trim().toUpperCase();
+    const name=line.replace(/^\d+[.)]\s*/,'').replace(/[^A-Za-z\s'-]/g,'').trim().toUpperCase();
     if(name.length<3)return;
     const key=name.replace(/[^A-Z]/g,'');
     if(seen.has(key))return;
     seen.add(key);
-    students.push({name,class:'',balance:0,termFees:0,paid:0,status:'OWING',confidence:40});
+    students.push({name,class:'UNKNOWN',balance:0,termFees:0,paid:0,status:'OWING',confidence:40});
   });
   return students;
 }
@@ -711,14 +673,13 @@ document.addEventListener('DOMContentLoaded',()=>{
   if(saved){
     try{
       agent=JSON.parse(saved);
-      if(agent&&agent.id&&agent.name){
+      if(agent&&agent.id){
         startApp();
-        if(db){const p=normPhone(agent.phone||'');const l=p.startsWith('234')?'0'+p.slice(3):p;refreshBg(agent.id,p,l).catch(()=>{});}
+        if(db&&!agent._guest){const p=normPhone(agent.phone||'');const l=p.startsWith('234')?'0'+p.slice(3):p;refreshBg(agent.id,p,l).catch(()=>{});}
         return;
       }
     }catch(e){localStorage.removeItem('ag2_agent');}
   }
-  $('login').style.display='flex';
-  $('login').style.flexDirection='column';
+  $('login').style.display='flex';$('login').style.flexDirection='column';
   $('app').style.display='none';
 });

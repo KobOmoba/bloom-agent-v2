@@ -163,7 +163,7 @@ async function _getApiKeys(){
   const doc=await db.collection('admin_settings').doc('main').get();
   if(!doc.exists)throw new Error('No settings doc');
   const d=doc.data();
-  apiKeys={groq:d.groqApiKey||'',hf:d.hfApiKey||''};
+  apiKeys={groq:d.groqApiKey||'',hf:d.hfApiKey||'',gemini:d.geminiApiKey||''};
   return apiKeys;
 }
 
@@ -304,8 +304,12 @@ async function processAllLedgers(){
   prog.style.width='5%';
 
   let keys;
-  try{keys=await _getApiKeys();if(!keys.groq)throw new Error('No Groq API key — add it in portal Settings tab.');}
-  catch(e){status.textContent='❌ '+e.message;return;}
+  try{keys=await _getApiKeys();}
+  catch(e){status.textContent='❌ Could not load API keys: '+e.message;return;}
+  if(!keys.gemini&&!keys.groq){
+    status.textContent='❌ No OCR API key. Add a Gemini API key in portal Settings.';
+    return;
+  }
 
   allStudents=[];classGroups={};
 
@@ -339,8 +343,17 @@ async function processAllLedgers(){
     status.textContent='Reading page '+(parseInt(idx)+1)+' of '+images.length+'...';
     try{
       const compressed=await compressLedger(url);
-      const result=await callGroqVision(compressed,ledgerPrompt,keys.groq);
-      console.log('[v2] Groq raw (page '+(parseInt(idx)+1)+'):', result.slice(0,400));
+      let result='';
+      if(keys.gemini){
+        console.log('[v2] Using Gemini for page '+(parseInt(idx)+1));
+        status.textContent='Reading page '+(parseInt(idx)+1)+' with Gemini AI...';
+        result=await callGeminiVision(compressed,ledgerPrompt,keys.gemini);
+      } else {
+        console.log('[v2] Using Groq for page '+(parseInt(idx)+1));
+        status.textContent='Reading page '+(parseInt(idx)+1)+' with Groq AI...';
+        result=await callGroqVision(compressed,ledgerPrompt,keys.groq);
+      }
+      console.log('[v2] OCR raw (page '+(parseInt(idx)+1)+'):', result.slice(0,400));
 
       let parsed={students:[]};
       try{
@@ -367,12 +380,14 @@ async function processAllLedgers(){
         addLiveItem(liveContent,s);
       });
 
-      // 15s cooldown between pages (Groq 6000 TPM limit)
-      if(i<images.length-1){
+      // Cooldown between pages: Groq needs 15s (TPM limit), Gemini needs none
+      if(i<images.length-1&&!keys.gemini){
         for(let t=15;t>0;t--){
           status.textContent='Page '+(parseInt(idx)+1)+' done. Next in '+t+'s...';
           await sleep(1000);
         }
+      } else if(i<images.length-1&&keys.gemini){
+        await sleep(1000); // 1s pause between pages for Gemini
       }
     }catch(e){
       console.warn('[v2] Page '+idx+' error:',e.message);
@@ -619,6 +634,31 @@ async function compressImage(dataUrl,maxW){
     };
     img.onerror=reject;img.src=dataUrl;
   });
+}
+
+
+// ── Gemini Vision — purpose-built for document/handwriting OCR ────────────
+async function callGeminiVision(imageDataUrl,prompt,apiKey){
+  const base64=imageDataUrl.split(',')[1];
+  const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
+  const resp=await fetch(
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key='+apiKey,
+    {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        contents:[{parts:[
+          {inline_data:{mime_type:mimeType,data:base64}},
+          {text:prompt}
+        ]}],
+        generationConfig:{temperature:0.1,maxOutputTokens:4096}
+      })
+    }
+  );
+  if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.error?.message||'Gemini '+resp.status);}
+  const data=await resp.json();
+  const text=data.candidates?.[0]?.content?.parts?.[0]?.text||'';
+  return text.trim();
 }
 
 async function callGroqVision(imageDataUrl,prompt,apiKey){

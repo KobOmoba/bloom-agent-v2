@@ -163,7 +163,7 @@ async function _getApiKeys(){
   const doc=await db.collection('admin_settings').doc('main').get();
   if(!doc.exists)throw new Error('No settings doc');
   const d=doc.data();
-  apiKeys={groq:d.groqApiKey||'',hf:d.hfApiKey||'',gemini:d.geminiApiKey||''};
+  apiKeys={groq:d.groqApiKey||'',hf:d.hfApiKey||'',gemini:d.geminiApiKey||'',deepseek:d.deepseekApiKey||'',deepseekProvider:d.deepseekProvider||'siliconflow'};
   return apiKeys;
 }
 
@@ -306,8 +306,8 @@ async function processAllLedgers(){
   let keys;
   try{keys=await _getApiKeys();}
   catch(e){status.textContent='❌ Could not load API keys: '+e.message;return;}
-  if(!keys.gemini&&!keys.groq){
-    status.textContent='❌ No OCR API key. Add a Gemini API key in portal Settings.';
+  if(!keys.deepseek&&!keys.gemini&&!keys.groq){
+    status.textContent='❌ No OCR key. Add DeepSeek, Gemini, or Groq key in portal Settings.';
     return;
   }
 
@@ -344,7 +344,14 @@ async function processAllLedgers(){
     try{
       const compressed=await compressLedger(url);
       let result='';
-      if(keys.gemini){
+      let usedDeepSeek=false;
+      if(keys.deepseek){
+        console.log('[v2] Using DeepSeek-OCR for page '+(parseInt(idx)+1));
+        status.textContent='Reading page '+(parseInt(idx)+1)+' with DeepSeek-OCR...';
+        result=await callDeepSeekOCR(compressed,keys.deepseek,keys.deepseekProvider);
+        usedDeepSeek=true;
+        console.log('[v2] DeepSeek-OCR raw:', result.slice(0,500));
+      } else if(keys.gemini){
         console.log('[v2] Using Gemini for page '+(parseInt(idx)+1));
         status.textContent='Reading page '+(parseInt(idx)+1)+' with Gemini AI...';
         result=await callGeminiVision(compressed,ledgerPrompt,keys.gemini);
@@ -356,13 +363,19 @@ async function processAllLedgers(){
       console.log('[v2] OCR raw (page '+(parseInt(idx)+1)+'):', result.slice(0,400));
 
       let parsed={students:[]};
-      try{
-        const clean=result.replace(/```json[\s\S]*?```/g,m=>m).replace(/```/g,'').trim();
-        parsed=JSON.parse(clean);
-      }catch(e){
-        // JSON failed — extract names from raw text
-        parsed={students:fallbackExtract(result)};
-        console.log('[v2] JSON parse failed, fallback extracted:',parsed.students.length);
+      if(usedDeepSeek){
+        // DeepSeek-OCR returns raw markdown — use specialized parser
+        const dsStudents = parseDeepSeekOCRText(result);
+        parsed = {students: dsStudents};
+        console.log('[v2] DeepSeek-OCR parsed:', dsStudents.length, 'students');
+      } else {
+        try{
+          const clean=result.replace(/```json[\s\S]*?```/g,m=>m).replace(/```/g,'').trim();
+          parsed=JSON.parse(clean);
+        }catch(e){
+          parsed={students:fallbackExtract(result)};
+          console.log('[v2] JSON parse failed, fallback extracted:',parsed.students.length);
+        }
       }
 
       const students=parsed.students||[];
@@ -386,8 +399,8 @@ async function processAllLedgers(){
           status.textContent='Page '+(parseInt(idx)+1)+' done. Next in '+t+'s...';
           await sleep(1000);
         }
-      } else if(i<images.length-1&&keys.gemini){
-        await sleep(1000); // 1s pause between pages for Gemini
+      } else if(i<images.length-1&&(keys.gemini||keys.deepseek)){
+        await sleep(1000); // 1s pause for Gemini/DeepSeek
       }
     }catch(e){
       console.warn('[v2] Page '+idx+' error:',e.message);
@@ -638,6 +651,129 @@ async function compressImage(dataUrl,maxW){
 
 
 // ── Gemini Vision — purpose-built for document/handwriting OCR ────────────
+
+// ── DeepSeek-OCR via SiliconFlow (free), Novita, or DeepInfra ────────────
+// SiliconFlow: free tier, no limits on DeepSeek-OCR
+// Endpoint: https://api.siliconflow.cn/v1/chat/completions
+// Model:    deepseek-ai/DeepSeek-OCR
+async function callDeepSeekOCR(imageDataUrl, apiKey, provider){
+  provider = provider || 'siliconflow';
+  const base64 = imageDataUrl.split(',')[1];
+  const mimeType = imageDataUrl.split(';')[0].split(':')[1] || 'image/jpeg';
+  const dataUrl = 'data:' + mimeType + ';base64,' + base64;
+
+  let endpoint, model;
+  if(provider === 'deepinfra'){
+    endpoint = 'https://api.deepinfra.com/v1/openai/chat/completions';
+    model    = 'deepseek-ai/DeepSeek-OCR';
+  } else if(provider === 'novita'){
+    endpoint = 'https://api.novita.ai/openai/chat/completions';
+    model    = 'deepseek/deepseek-ocr-2';
+  } else {
+    // Default: SiliconFlow — DeepSeek-OCR is permanently free here
+    endpoint = 'https://api.siliconflow.cn/v1/chat/completions';
+    model    = 'deepseek-ai/DeepSeek-OCR';
+  }
+
+  const resp = await fetch(endpoint, {
+    method: 'POST',
+    headers: {'Authorization':'Bearer '+apiKey, 'Content-Type':'application/json'},
+    body: JSON.stringify({
+      model: model,
+      max_tokens: 4096,
+      stream: false,
+      messages: [{
+        role: 'user',
+        content: [
+          {type:'image_url', image_url:{url: dataUrl}},
+          {type:'text', text:'<|grounding|>Extract tables from this document and convert to markdown format.'}
+        ]
+      }]
+    })
+  });
+
+  if(!resp.ok){
+    const err = await resp.json().catch(()=>({}));
+    throw new Error(err.error?.message || 'DeepSeek-OCR ' + resp.status + ' (provider: '+provider+')');
+  }
+
+  const data = await resp.json();
+  const text = data.choices?.[0]?.message?.content || '';
+  return text.trim();
+}
+
+// Parse raw markdown/text from DeepSeek-OCR into student records
+function parseDeepSeekOCRText(rawText){
+  const students = [];
+  const seen = new Set();
+  const lines = rawText.split('\n');
+
+  for(const line of lines){
+    const t = line.trim();
+    if(!t || t.length < 3) continue;
+
+    // Skip header rows and separator lines
+    if(/^[|\-\s*=]+$/.test(t)) continue;
+    if(/s\/n|serial|name.*fee|balance.*fee|term.*fee/i.test(t)) continue;
+    if(/total|grand|page|section|class list/i.test(t) && t.length < 40) continue;
+
+    let name = '', nums = [];
+
+    if(t.includes('|')){
+      // Markdown table row
+      const cols = t.split('|').map(c=>c.trim()).filter(Boolean);
+      if(cols.length < 2) continue;
+      // First non-numeric col is usually the name (skip S/N col)
+      const nameCol = cols.find(c => /[A-Za-z]{3,}/.test(c) && !/^\d+$/.test(c));
+      if(!nameCol) continue;
+      name = nameCol.replace(/[^A-Za-z\s'\-.]/g,' ').replace(/\s+/g,' ').trim().toUpperCase();
+      // Collect all numeric values from the row
+      cols.forEach(c => {
+        const n = parseInt(c.replace(/[,\s]/g,''));
+        if(!isNaN(n) && n > 100) nums.push(n);
+      });
+    } else {
+      // Plain text row — strip leading numbers/bullets
+      let clean = t.replace(/^\d+[.)\s]+/, '').trim();
+      // Extract the name part (longest alphabetic sequence before numbers)
+      const nameMatch = clean.match(/^([A-Za-z][A-Za-z\s'\-.]{3,}?)(?=\s+[\d,]|$)/);
+      if(!nameMatch) continue;
+      name = nameMatch[1].replace(/\s+/g,' ').trim().toUpperCase();
+      // Extract numbers
+      const numMatches = clean.match(/\d[\d,]*/g) || [];
+      numMatches.forEach(m => {
+        const n = parseInt(m.replace(/,/g,''));
+        if(n > 100) nums.push(n);
+      });
+    }
+
+    // Validate name
+    if(!name || name.length < 4) continue;
+    if(/^(BALANCE|TOTAL|GRAND|FEE|TERM|DATE|S\/N|PAGE|CLASS)/i.test(name)) continue;
+    if(!/[A-Z]{3,}/.test(name)) continue;
+
+    const key = name.replace(/[^A-Z]/g,'');
+    if(seen.has(key)) continue;
+    seen.add(key);
+
+    // Assign fee values: largest number = termFees, second = paid, smallest remainder = balance
+    nums.sort((a,b) => b - a);
+    const termFees = nums[0] || 0;
+    const paid     = nums[1] || 0;
+    const balance  = nums[2] || 0;
+
+    let status = 'OWING';
+    if(paid >= termFees && termFees > 0) status = 'FULLY PAID';
+    else if(paid > 0) status = 'PART PAID';
+
+    students.push({
+      name, class:'UNKNOWN', balance, termFees, paid, status,
+      confidence: name.split(' ').length >= 2 ? 82 : 60
+    });
+  }
+  return students;
+}
+
 async function callGeminiVision(imageDataUrl,prompt,apiKey){
   const base64=imageDataUrl.split(',')[1];
   const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';

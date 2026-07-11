@@ -471,6 +471,30 @@ async function processAllLedgers(){
       }
     }catch(e){
       console.warn('[v2] Page '+idx+' error:',e.message);
+      // 401 = bad key — clear it and ask user to re-enter
+      if(e.message.includes('401')||e.message.toLowerCase().includes('unauthorized')){
+        localStorage.removeItem('ag2_dsKey');
+        localStorage.removeItem('ag2_dsProv');
+        apiKeys=null;
+        $('ledger-proc').style.display='none';
+        const dbg=$('ocr-debug');
+        if(dbg){
+          dbg.style.display='block';
+          dbg.innerHTML='<div style="font-weight:700;color:var(--danger);margin-bottom:.4rem;">❌ Invalid API key (401)</div>'+
+            '<p style="font-size:.75rem;color:var(--sub);margin-bottom:.5rem;">The key was rejected. Please re-enter your SiliconFlow key.</p>'+
+            '<input id="ds-key-input" type="password" placeholder="Paste correct SiliconFlow key (sk-...)">'+
+            '<select id="ds-prov-input" style="margin-top:.4rem;">'+
+            '<option value="siliconflow">SiliconFlow (free)</option>'+
+            '<option value="novita">Novita.ai</option>'+
+            '<option value="deepinfra">DeepInfra</option>'+
+            '</select>'+
+            '<button onclick="saveDeepSeekKey()" style="background:var(--money);color:#fff;border:none;border-radius:10px;'+
+            'padding:.65rem;font-size:.86rem;cursor:pointer;font-weight:700;width:100%;margin-top:.5rem;">'+
+            '💾 Save & Retry</button>';
+        }
+        $('ledger-results').style.display='block';
+        return;
+      }
       status.textContent='Page '+(parseInt(idx)+1)+' error: '+e.message;
       await sleep(2000);
     }
@@ -544,7 +568,7 @@ function showLedgerResults(){
     const dbg=$('ocr-debug');
     if(dbg){
       dbg.style.display='block';
-      dbg.innerHTML='<div style="font-size:.72rem;font-weight:700;color:var(--warn);margin-bottom:.3rem;">⚠️ 0 students found. Check Brave console for Groq response.</div><div style="font-size:.7rem;color:var(--sub);">Tips: ensure good lighting, hold phone flat above ledger, page fills the frame.</div><button onclick="retryLedger()" style="background:var(--brand);color:#fff;border:none;border-radius:8px;padding:.4rem .8rem;font-size:.74rem;cursor:pointer;margin-top:.4rem;font-weight:700;">📸 Retake & retry</button>';
+      dbg.innerHTML='<div style="font-size:.72rem;font-weight:700;color:var(--warn);margin-bottom:.3rem;">⚠️ 0 students found. Check Brave console for DeepSeek-OCR response.</div><div style="font-size:.7rem;color:var(--sub);">Tips: ensure good lighting, hold phone flat above ledger, page fills the frame.</div><button onclick="retryLedger()" style="background:var(--brand);color:#fff;border:none;border-radius:8px;padding:.4rem .8rem;font-size:.74rem;cursor:pointer;margin-top:.4rem;font-weight:700;">📸 Retake & retry</button>';
     }
   }
 
@@ -559,6 +583,17 @@ function fixName(cls,idx,val){
 }
 
 function overrideTier(maxStr){selTier=TIERS.find(t=>t.max===parseInt(maxStr))||selTier;}
+
+
+function clearDsKeyAndRetry(){
+  localStorage.removeItem('ag2_dsKey');
+  localStorage.removeItem('ag2_dsProv');
+  apiKeys=null;
+  retryLedger();
+  const dbg=$('ocr-debug');if(dbg)dbg.style.display='none';
+  showDeepSeekKeyPrompt();
+  const res=$('ledger-results');if(res)res.style.display='block';
+}
 
 function retryLedger(){
   ledgerImages={};ledgerPageCount=1;allStudents=[];classGroups={};

@@ -162,7 +162,7 @@ async function _getApiKeys(){
   if(apiKeys)return apiKeys;
   // Check localStorage first — fastest, works offline after first entry
   const localDs = localStorage.getItem('ag2_dsKey')||'';
-  const localProv = localStorage.getItem('ag2_dsProv')||'siliconflow';
+  const localProv = localStorage.getItem('ag2_dsProv')||'regolo';
   // Try Firestore in background
   let fsDs='', fsProv='siliconflow', fsGroq='';
   if(db){
@@ -331,15 +331,15 @@ function showDeepSeekKeyPrompt(){
   if(!dbg)return;
   dbg.style.display='block';
   dbg.innerHTML=[
-    '<div style="font-weight:700;font-size:.82rem;color:var(--money);margin-bottom:.5rem;">🔑 Enter your SiliconFlow API Key</div>',
+    '<div style="font-weight:700;font-size:.82rem;color:var(--money);margin-bottom:.5rem;">🔑 Enter your Regolo API Key</div>',
     '<p style="font-size:.75rem;color:var(--sub);margin-bottom:.5rem;">',
-    'DeepSeek-OCR on SiliconFlow is <strong style="color:var(--money);">permanently free</strong>.<br>',
-    'Get your key at <strong>cloud.siliconflow.cn</strong> → API Keys',
+    'Regolo.ai hosts DeepSeek-OCR-2 free for 60 days (no credit card).<br>',
+    'Get your key at <strong>regolo.ai</strong> → Dashboard → API Keys',
     '</p>',
-    '<input id="ds-key-input" type="password" placeholder="Paste SiliconFlow API key (sk-...)">',
+    '<input id="ds-key-input" type="password" placeholder="Paste Regolo API key...">',
     '<select id="ds-prov-input" style="margin-top:.4rem;">',
-    '<option value="siliconflow">SiliconFlow (free — recommended)</option>',
-    '<option value="novita">Novita.ai</option>',
+    '<option value="regolo">Regolo.ai (recommended)</option>',
+    '<option value="siliconflow">SiliconFlow</option>',
     '<option value="deepinfra">DeepInfra</option>',
     '</select>',
     '<button onclick="saveDeepSeekKey()" style="background:var(--money);color:#fff;border:none;border-radius:10px;',
@@ -350,7 +350,7 @@ function showDeepSeekKeyPrompt(){
 
 async function saveDeepSeekKey(){
   const key  = ($('ds-key-input')?.value||'').trim();
-  const prov = $('ds-prov-input')?.value || 'siliconflow';
+  const prov = $('ds-prov-input')?.value || 'regolo';
   if(!key){alert('Paste your SiliconFlow API key first.');return;}
   // Cache in localStorage immediately
   localStorage.setItem('ag2_dsKey', key);
@@ -482,10 +482,10 @@ async function processAllLedgers(){
           dbg.style.display='block';
           dbg.innerHTML='<div style="font-weight:700;color:var(--danger);margin-bottom:.4rem;">❌ Invalid API key (401)</div>'+
             '<p style="font-size:.75rem;color:var(--sub);margin-bottom:.5rem;">The key was rejected. Please re-enter your SiliconFlow key.</p>'+
-            '<input id="ds-key-input" type="password" placeholder="Paste correct SiliconFlow key (sk-...)">'+
+            '<input id="ds-key-input" type="password" placeholder="Paste correct Regolo API key...">'+
             '<select id="ds-prov-input" style="margin-top:.4rem;">'+
-            '<option value="siliconflow">SiliconFlow (free)</option>'+
-            '<option value="novita">Novita.ai</option>'+
+            '<option value="regolo">Regolo.ai (recommended)</option>'+
+            '<option value="siliconflow">SiliconFlow</option>'+
             '<option value="deepinfra">DeepInfra</option>'+
             '</select>'+
             '<button onclick="saveDeepSeekKey()" style="background:var(--money);color:#fff;border:none;border-radius:10px;'+
@@ -754,27 +754,27 @@ async function compressImage(dataUrl,maxW){
 
 // ── Gemini Vision — purpose-built for document/handwriting OCR ────────────
 
-// ── DeepSeek-OCR via SiliconFlow (free), Novita, or DeepInfra ────────────
-// SiliconFlow: free tier, no limits on DeepSeek-OCR
-// Endpoint: https://api.siliconflow.cn/v1/chat/completions
-// Model:    deepseek-ai/DeepSeek-OCR
+// ── DeepSeek-OCR — providers: regolo (default), novita, deepinfra, siliconflow ─
 async function callDeepSeekOCR(imageDataUrl, apiKey, provider){
-  provider = provider || 'siliconflow';
+  provider = provider || 'regolo';
   const base64 = imageDataUrl.split(',')[1];
   const mimeType = imageDataUrl.split(';')[0].split(':')[1] || 'image/jpeg';
   const dataUrl = 'data:' + mimeType + ';base64,' + base64;
 
   let endpoint, model;
-  if(provider === 'deepinfra'){
+  if(provider === 'siliconflow'){
+    endpoint = 'https://api.siliconflow.cn/v1/chat/completions';
+    model    = 'deepseek-ai/DeepSeek-OCR';
+  } else if(provider === 'deepinfra'){
     endpoint = 'https://api.deepinfra.com/v1/openai/chat/completions';
     model    = 'deepseek-ai/DeepSeek-OCR';
   } else if(provider === 'novita'){
     endpoint = 'https://api.novita.ai/openai/chat/completions';
     model    = 'deepseek/deepseek-ocr-2';
   } else {
-    // Default: SiliconFlow — DeepSeek-OCR is permanently free here
-    endpoint = 'https://api.siliconflow.cn/v1/chat/completions';
-    model    = 'deepseek-ai/DeepSeek-OCR';
+    // Default: Regolo — hosts DeepSeek-OCR-2, EU-based, free tier
+    endpoint = 'https://api.regolo.ai/v1/chat/completions';
+    model    = 'deepseek-ai/DeepSeek-OCR-2';
   }
 
   const resp = await fetch(endpoint, {
@@ -788,7 +788,7 @@ async function callDeepSeekOCR(imageDataUrl, apiKey, provider){
         role: 'user',
         content: [
           {type:'image_url', image_url:{url: dataUrl}},
-          {type:'text', text:'<|grounding|>Extract tables from this document and convert to markdown format.'}
+          {type:'text', text:'<|grounding|>Convert the document to markdown.'}
         ]
       }]
     })

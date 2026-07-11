@@ -9,6 +9,7 @@ try{
 
 // ── State ──────────────────────────────────────────────────────────────────
 let agent=null,apiKeys=null,currentTab='wizard';
+let _dsKey='';  // SiliconFlow / DeepSeek-OCR key
 let timerSec=0,timerInterval=null;
 let ledgerPageCount=1,ledgerImages={};
 let allStudents=[],classGroups={},selTier=null;
@@ -159,11 +160,31 @@ function logout(){if(!confirm('Logout?'))return;localStorage.removeItem('ag2_age
 // ── API Keys ───────────────────────────────────────────────────────────────
 async function _getApiKeys(){
   if(apiKeys)return apiKeys;
-  if(!db)throw new Error('No DB');
-  const doc=await db.collection('admin_settings').doc('main').get();
-  if(!doc.exists)throw new Error('No settings doc');
-  const d=doc.data();
-  apiKeys={groq:d.groqApiKey||'',hf:d.hfApiKey||'',gemini:d.geminiApiKey||'',deepseek:d.deepseekApiKey||'',deepseekProvider:d.deepseekProvider||'siliconflow'};
+  // Check localStorage first — fastest, works offline after first entry
+  const localDs = localStorage.getItem('ag2_dsKey')||'';
+  const localProv = localStorage.getItem('ag2_dsProv')||'siliconflow';
+  // Try Firestore in background
+  let fsDs='', fsProv='siliconflow', fsGroq='';
+  if(db){
+    try{
+      const doc=await db.collection('admin_settings').doc('main').get();
+      if(doc.exists){
+        const d=doc.data();
+        fsDs=d.deepseekApiKey||'';
+        fsProv=d.deepseekProvider||'siliconflow';
+        fsGroq=d.groqApiKey||'';
+      }
+    }catch(e){console.warn('Settings fetch:',e.message);}
+  }
+  // Prefer locally cached key (agent may have entered it directly)
+  const dsKey  = localDs || fsDs;
+  const dsProv = localDs ? localProv : fsProv;
+  if(dsKey && !localDs){
+    // Cache Firestore key locally for next time
+    localStorage.setItem('ag2_dsKey', dsKey);
+    localStorage.setItem('ag2_dsProv', dsProv);
+  }
+  apiKeys={deepseek:dsKey, deepseekProvider:dsProv, groq:fsGroq, gemini:'', hf:''};
   return apiKeys;
 }
 
@@ -294,6 +315,62 @@ function captureLedger(idx){
 
 function skipLedger(){allStudents=[];classGroups={};$('ledger-results').style.display='block';$('step2-nav').style.display='block';}
 
+
+// ── Inline DeepSeek-OCR key entry (shown when no key configured) ─────────
+function showDeepSeekKeyPrompt(){
+  const results = $('ledger-results');
+  if(results) results.style.display='block';
+  const classGroups = $('class-groups');
+  if(classGroups) classGroups.innerHTML='';
+  const tierCard = $('tier-auto-card');
+  if(tierCard) tierCard.innerHTML='';
+  const stats = $('as-total');
+  if(stats){ $('as-total').textContent='—';$('as-classes').textContent='—';$('as-conf').textContent='—';}
+
+  const dbg=$('ocr-debug');
+  if(!dbg)return;
+  dbg.style.display='block';
+  dbg.innerHTML=[
+    '<div style="font-weight:700;font-size:.82rem;color:var(--money);margin-bottom:.5rem;">🔑 Enter your SiliconFlow API Key</div>',
+    '<p style="font-size:.75rem;color:var(--sub);margin-bottom:.5rem;">',
+    'DeepSeek-OCR on SiliconFlow is <strong style="color:var(--money);">permanently free</strong>.<br>',
+    'Get your key at <strong>cloud.siliconflow.cn</strong> → API Keys',
+    '</p>',
+    '<input id="ds-key-input" type="password" placeholder="Paste SiliconFlow API key (sk-...)">',
+    '<select id="ds-prov-input" style="margin-top:.4rem;">',
+    '<option value="siliconflow">SiliconFlow (free — recommended)</option>',
+    '<option value="novita">Novita.ai</option>',
+    '<option value="deepinfra">DeepInfra</option>',
+    '</select>',
+    '<button onclick="saveDeepSeekKey()" style="background:var(--money);color:#fff;border:none;border-radius:10px;',
+    'padding:.65rem;font-size:.86rem;cursor:pointer;font-weight:700;width:100%;margin-top:.5rem;">',
+    '💾 Save Key & Scan Now</button>'
+  ].join('');
+}
+
+async function saveDeepSeekKey(){
+  const key  = ($('ds-key-input')?.value||'').trim();
+  const prov = $('ds-prov-input')?.value || 'siliconflow';
+  if(!key){alert('Paste your SiliconFlow API key first.');return;}
+  // Cache in localStorage immediately
+  localStorage.setItem('ag2_dsKey', key);
+  localStorage.setItem('ag2_dsProv', prov);
+  // Reset apiKeys cache so it gets picked up
+  apiKeys = null;
+  // Save to Firestore so portal and future loads see it too
+  if(db){
+    db.collection('admin_settings').doc('main').set(
+      {deepseekApiKey:key, deepseekProvider:prov},
+      {merge:true}
+    ).then(()=>console.log('✅ DeepSeek key saved to Firestore'))
+     .catch(e=>console.warn('Firestore save:', e.message));
+  }
+  // Hide the prompt and start scanning
+  const dbg=$('ocr-debug');if(dbg)dbg.style.display='none';
+  const res=$('ledger-results');if(res)res.style.display='none';
+  processAllLedgers();
+}
+
 async function processAllLedgers(){
   const images=Object.entries(ledgerImages);
   if(!images.length){alert('Photograph at least one ledger page first.');return;}
@@ -305,9 +382,12 @@ async function processAllLedgers(){
 
   let keys;
   try{keys=await _getApiKeys();}
-  catch(e){status.textContent='❌ Could not load API keys: '+e.message;return;}
-  if(!keys.deepseek&&!keys.gemini&&!keys.groq){
-    status.textContent='❌ No OCR key. Add DeepSeek, Gemini, or Groq key in portal Settings.';
+  catch(e){keys={deepseek:'',groq:'',gemini:'',deepseekProvider:'siliconflow'};}
+
+  // DeepSeek-OCR is the ONLY ledger engine. If no key, show inline entry.
+  if(!keys.deepseek){
+    $('ledger-proc').style.display='none';
+    showDeepSeekKeyPrompt();
     return;
   }
 
@@ -343,24 +423,11 @@ async function processAllLedgers(){
     status.textContent='Reading page '+(parseInt(idx)+1)+' of '+images.length+'...';
     try{
       const compressed=await compressLedger(url);
-      let result='';
-      let usedDeepSeek=false;
-      if(keys.deepseek){
-        console.log('[v2] Using DeepSeek-OCR for page '+(parseInt(idx)+1));
-        status.textContent='Reading page '+(parseInt(idx)+1)+' with DeepSeek-OCR...';
-        result=await callDeepSeekOCR(compressed,keys.deepseek,keys.deepseekProvider);
-        usedDeepSeek=true;
-        console.log('[v2] DeepSeek-OCR raw:', result.slice(0,500));
-      } else if(keys.gemini){
-        console.log('[v2] Using Gemini for page '+(parseInt(idx)+1));
-        status.textContent='Reading page '+(parseInt(idx)+1)+' with Gemini AI...';
-        result=await callGeminiVision(compressed,ledgerPrompt,keys.gemini);
-      } else {
-        console.log('[v2] Using Groq for page '+(parseInt(idx)+1));
-        status.textContent='Reading page '+(parseInt(idx)+1)+' with Groq AI...';
-        result=await callGroqVision(compressed,ledgerPrompt,keys.groq);
-      }
-      console.log('[v2] OCR raw (page '+(parseInt(idx)+1)+'):', result.slice(0,400));
+      // DeepSeek-OCR only — no fallback
+      status.textContent='Reading page '+(parseInt(idx)+1)+' of '+images.length+' with DeepSeek-OCR...';
+      const result=await callDeepSeekOCR(compressed,keys.deepseek,keys.deepseekProvider);
+      const usedDeepSeek=true;
+      console.log('[v2] DeepSeek-OCR page '+(parseInt(idx)+1)+':', result.slice(0,500));
 
       let parsed={students:[]};
       if(usedDeepSeek){

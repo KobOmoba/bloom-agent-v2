@@ -774,7 +774,7 @@ async function callDeepSeekOCR(imageDataUrl, apiKey, provider){
   } else {
     // Default: Regolo — hosts DeepSeek-OCR-2, EU-based, free tier
     endpoint = 'https://api.regolo.ai/v1/chat/completions';
-    model    = 'deepseek-ai/DeepSeek-OCR-2';
+    model    = 'deepseek-ocr-2';
   }
 
   const resp = await fetch(endpoint, {

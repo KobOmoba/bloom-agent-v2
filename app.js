@@ -9,7 +9,8 @@ try{
 
 // ── State ──────────────────────────────────────────────────────────────────
 let agent=null,apiKeys=null,currentTab='wizard';
-let _dsKey='';  // SiliconFlow / DeepSeek-OCR key
+let _dsKey='';  // DeepSeek-OCR key (optional)
+let selDetectedClass='';  // class detected from ledger header
 let timerSec=0,timerInterval=null;
 let ledgerPageCount=1,ledgerImages={};
 let allStudents=[],classGroups={},selTier=null;
@@ -380,100 +381,123 @@ async function processAllLedgers(){
   const prog=$('ledger-prog'),status=$('ledger-status');
   prog.style.width='5%';
 
-  let keys;
-  try{keys=await _getApiKeys();}
-  catch(e){keys={deepseek:'',groq:'',gemini:'',deepseekProvider:'siliconflow'};}
+  // Fetch Groq key from Firebase admin_settings — same source as v1
+  let groqKey='';
+  if(db){
+    try{
+      const doc=await db.collection('admin_settings').doc('main').get();
+      if(doc.exists){groqKey=doc.data().groqApiKey||'';}
+    }catch(e){console.warn('Key fetch:',e.message);}
+  }
+  if(!groqKey&&apiKeys&&apiKeys.groq)groqKey=apiKeys.groq;
 
-  // DeepSeek-OCR is the ONLY ledger engine. If no key, show inline entry.
-  if(!keys.deepseek){
+  if(!groqKey){
     $('ledger-proc').style.display='none';
-    showDeepSeekKeyPrompt();
+    const dbg=$('ocr-debug');
+    if(dbg){
+      dbg.style.display='block';
+      dbg.innerHTML='<div style="font-weight:700;color:var(--danger);margin-bottom:.5rem;">⚠️ Groq key not found</div>'+
+        '<p style="font-size:.75rem;color:var(--sub);">Ask Bayo to add groqApiKey to Firestore admin_settings → main.</p>';
+    }
+    $('ledger-results').style.display='block';
     return;
   }
 
-  allStudents=[];classGroups={};
-
-  // Prompt built without template literals to avoid escaping issues
-  const ledgerPrompt=[
-    'You are an expert at reading Nigerian handwritten school fee registers.',
-    'This image shows a handwritten fee register with student names in rows.',
+  const LEDGER_PROMPT=[
+    'You are reading a Nigerian school fee payment ledger (handwritten).',
+    'Columns: SERIAL NO | NAMES | BALANCE FROM LAST TERM | CURRENT TERMS FEES |',
+    'TOTAL | 1ST PART PAYMENT | TELLER NO | DATE | 2ND PART PAYMENT |',
+    'TELLER NO | DATE | 3RD PART PAYMENT | TELLER NO | DATE',
     '',
-    'YOUR TASK: Extract EVERY student name you can see.',
-    'Be very aggressive — if you can read 2 or more letters that look like a name, include it.',
-    'Do NOT return an empty students array. Nigerian ledgers always have names.',
+    'YOUR TASK: Extract EVERY student record. Read ALL rows. Do not stop early.',
     '',
-    'Return valid JSON ONLY — no markdown, no explanation:',
-    '{"students":[{"name":"SURNAME FIRSTNAME","class":"BASIC 4","balance":0,"termFees":28000,"paid":28000,"status":"FULLY PAID"}]}',
+    'Nigerian surnames: OGUNLADE, KASALI, ALAWODE, OYESANWO, OGUNDEYI, ALAO,',
+    'AKINWANDE, OLAWALE, SHONPE, GBELEKALE, OLIYIDE, KOLANOLE, ADENIYI, OBASA,',
+    'OLATUNDE, LAWAL, OGUNDETI, OYERINDE, ILELABOYE, AFOLABI, DADA, MOSES,',
+    'OYEBOLA, ADERIBIGBE, OLAYINOLA, IDOWU, ATAJA, AWOLOWO, ADEKUNLE,',
+    'OGUNSOLA, JOHN, ADEOYE, SABIU, ALIMI',
+    '',
+    'Nigerian firstnames: GIFT, SUCCESS, EZEKIEL, AIWAL, LAWAL, EMMANUEL,',
+    'RASHEEDAT, KHALEED, ABDULLAHI, SALAM, OYEDEPO, WAJUD, MICHEAL, IBRAHIM,',
+    'RAHMON, AISHAT, CHRISTIANA, AFEEZ, DOMINION, SAMUEL, MALEEK, PATHIA,',
+    'INIOLUWA, QUARIBAT, GOLD, TOHEEB, ADEOLA, GODWIN, ELIZABETH, TIBESIMI,',
+    'WASLAT, MOZEED, DEBORAH, SHINDARA, GABRIEL, RASAQ, ENOCH, ABIGEAL,',
+    'KOREDE, ADEMIDE, AMINDAT, WIQUYAT, ISREA, DORCAS, MARIAM, CYNTHIA, AMINAT',
     '',
     'Rules:',
-    '- name: surname first, ALL CAPS, letters and spaces only. Include even partial names.',
-    '- class: e.g. "BASIC 4", "JSS 2", "NURSERY 1", "PRIMARY 3". Use "UNKNOWN" if not visible.',
-    '- balance: carry-over owed (integer, 0 if none)',
-    '- termFees: this term fees (integer, 0 if unclear)',
-    '- paid: amount paid (integer, 0 if none)',
-    '- status: exactly "FULLY PAID", "PART PAID", or "OWING"',
+    '1. NAMES column is always SURNAME FIRSTNAME — combine them',
+    '2. balance = amount carried from last term (0 if none)',
+    '3. termFees = current term fee amount',
+    '4. paid = sum of all part payments made so far this term',
+    '5. status = "FULLY PAID" if fully settled, "PART PAID" if partial, "OWING" if nothing paid',
+    '6. If "FULLY PAID" is written anywhere on the row — status is FULLY PAID',
+    '7. Crossed out figures — use the final corrected amount',
+    '8. class = the class label at top of page e.g. KG, BASIC 1, NURSERY 2',
+    '9. Read EVERY row — registers have 10-25 students per page',
     '',
-    'Common Nigerian names: ADEYEMI IBRAHIM OKONKWO BALOGUN AFOLABI GBADAMOSI NWACHUKWU ABDULLAHI',
-    'Read every row. Return all names you can see.'
+    'Return ONLY valid JSON — no explanation no markdown:',
+    '{"detected_class":"BASIC 4","students":[',
+    '{"name":"OGUNLADE MICHEAL","balance":0,"termFees":24000,"paid":24000,"status":"FULLY PAID"},',
+    '{"name":"KASALI RASAQ","balance":5000,"termFees":24000,"paid":17000,"status":"PART PAID"},',
+    '{"name":"JOHN DEBORAH","balance":3000,"termFees":26000,"paid":4000,"status":"OWING"}',
+    ']}'
   ].join('\n');
+
+  allStudents=[];classGroups={};selDetectedClass='';
 
   for(let i=0;i<images.length;i++){
     const[idx,url]=images[i];
     prog.style.width=Math.round((i/images.length)*85)+'%';
     status.textContent='Reading page '+(parseInt(idx)+1)+' of '+images.length+'...';
+
+    // 15s cooldown between pages (Groq free-tier TPM limit)
+    if(i>0){
+      for(let s=15;s>0;s--){
+        status.textContent='Cooldown ('+s+'s) before page '+(parseInt(idx)+1)+'...';
+        await sleep(1000);
+      }
+    }
+
     try{
       const compressed=await compressLedger(url);
-      // Step 1: DeepSeek-OCR converts image to raw text/markdown
-      status.textContent='Step 1/2: DeepSeek-OCR reading page '+(parseInt(idx)+1)+'...';
-      const ocrRaw=await callDeepSeekOCR(compressed,keys.deepseek,keys.deepseekProvider);
-      window._lastOCRRaw=ocrRaw;
-      console.log('[v2] DeepSeek-OCR raw:', ocrRaw.slice(0,800));
-      // Step 2: Groq text model extracts structured names from the raw text
-      let result=ocrRaw;
-      if(keys.groq && ocrRaw && ocrRaw.length>10){
-        status.textContent='Step 2/2: Groq extracting student names...';
-        try{
-          const extractPrompt=[
-            'The following is raw OCR text from a Nigerian school fee register (handwritten ledger).',
-            'Extract ALL student names you can find. These are Nigerian names like ADEYEMI, IBRAHIM, OKONKWO, CECILIA, etc.',
-            'Ignore header words like SCHOOL, FEES, LEDGER, YEAR, BALANCE, TERM, DATE, BASIC, CLASS, S/N, TOTAL.',
-            '',
-            'RAW OCR TEXT:',
-            ocrRaw,
-            '',
-            'Return valid JSON ONLY:',
-            '{"students":[{"name":"SURNAME FIRSTNAME","class":"BASIC 4","balance":0,"termFees":28000,"paid":28000,"status":"FULLY PAID"}]}',
-            'If you cannot find any student names, return {"students":[]}'
-          ].join('\n');
-          result=await callGroqText(extractPrompt,keys.groq);
-          console.log('[v2] Groq extraction result:', result.slice(0,500));
-        }catch(e2){
-          console.warn('[v2] Groq extraction failed, falling back to direct parse:',e2.message);
-          result=ocrRaw;
-        }
-      }
-      const usedDeepSeek=true;
+      const b64=compressed.split(',')[1];
+      const resp=await fetch('https://api.groq.com/openai/v1/chat/completions',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+groqKey},
+        body:JSON.stringify({
+          model:'qwen/qwen3.6-27b',
+          messages:[{role:'user',content:[
+            {type:'image_url',image_url:{url:'data:image/jpeg;base64,'+b64}},
+            {type:'text',text:LEDGER_PROMPT}
+          ]}],
+          temperature:0.1,
+          max_tokens:2000,
+          reasoning_format:'hidden'
+        })
+      });
 
-      let parsed={students:[]};
-      if(usedDeepSeek){
-        // Strip any special tokens DeepSeek may include
-        const cleanResult = result.replace(/<\|[^|]*\|>/g,'').trim();
-        // DeepSeek-OCR returns raw markdown — use specialized parser
-        const dsStudents = parseDeepSeekOCRText(cleanResult);
-        parsed = {students: dsStudents};
-        console.log('[v2] DeepSeek-OCR parsed:', dsStudents.length, 'students');
-      } else {
-        try{
-          const clean=result.replace(/```json[\s\S]*?```/g,m=>m).replace(/```/g,'').trim();
-          parsed=JSON.parse(clean);
-        }catch(e){
-          parsed={students:fallbackExtract(result)};
-          console.log('[v2] JSON parse failed, fallback extracted:',parsed.students.length);
-        }
+      if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.error?.message||'Groq '+resp.status);}
+      const data=await resp.json();
+      let text=(data.choices?.[0]?.message?.content||'').trim();
+      text=text.replace(/<think>[\s\S]*?<\/think>/gi,'').trim();
+      window._lastOCRRaw=text;
+      console.log('[v2 Ledger] page '+(parseInt(idx)+1)+' raw:',text.slice(0,400));
+
+      let parsed={};
+      try{parsed=JSON.parse(text);}
+      catch(e){
+        const m=text.match(/\{[\s\S]*\}/);
+        try{parsed=m?JSON.parse(m[0]):{};}catch(e2){parsed={};}
+      }
+
+      if(parsed.detected_class){
+        const dc=String(parsed.detected_class).trim().toUpperCase();
+        if(dc&&dc!=='NULL'&&dc!=='UNKNOWN')selDetectedClass=dc;
       }
 
       const students=parsed.students||[];
-      console.log('[v2] Students from page '+(parseInt(idx)+1)+':',students.length);
+      console.log('[v2 Ledger] students page '+(parseInt(idx)+1)+':',students.length);
+
       const seenNames=new Set(allStudents.map(s=>s.name.toLowerCase().replace(/[^a-z]/g,'')));
       students.forEach(s=>{
         if(!s.name||s.name.length<2)return;
@@ -482,53 +506,20 @@ async function processAllLedgers(){
         const key=s.name.toLowerCase().replace(/[^a-z]/g,'');
         if(seenNames.has(key))return;
         seenNames.add(key);
+        s.class=s.class||selDetectedClass||'UNKNOWN';
         s.confidence=calcConf(s);
         allStudents.push(s);
         addLiveItem(liveContent,s);
       });
-
-      // Cooldown between pages: Groq needs 15s (TPM limit), Gemini needs none
-      if(i<images.length-1&&!keys.gemini){
-        for(let t=15;t>0;t--){
-          status.textContent='Page '+(parseInt(idx)+1)+' done. Next in '+t+'s...';
-          await sleep(1000);
-        }
-      } else if(i<images.length-1&&(keys.gemini||keys.deepseek)){
-        await sleep(1000); // 1s pause for Gemini/DeepSeek
-      }
     }catch(e){
-      console.warn('[v2] Page '+idx+' error:',e.message);
-      // 401 = bad key — clear it and ask user to re-enter
-      if(e.message.includes('401')||e.message.toLowerCase().includes('unauthorized')){
-        localStorage.removeItem('ag2_dsKey');
-        localStorage.removeItem('ag2_dsProv');
-        apiKeys=null;
-        $('ledger-proc').style.display='none';
-        const dbg=$('ocr-debug');
-        if(dbg){
-          dbg.style.display='block';
-          dbg.innerHTML='<div style="font-weight:700;color:var(--danger);margin-bottom:.4rem;">❌ Invalid API key (401)</div>'+
-            '<p style="font-size:.75rem;color:var(--sub);margin-bottom:.5rem;">The key was rejected. Please re-enter your SiliconFlow key.</p>'+
-            '<input id="ds-key-input" type="password" placeholder="Paste correct Regolo API key...">'+
-            '<select id="ds-prov-input" style="margin-top:.4rem;">'+
-            '<option value="regolo">Regolo.ai (recommended)</option>'+
-            '<option value="siliconflow">SiliconFlow</option>'+
-            '<option value="deepinfra">DeepInfra</option>'+
-            '</select>'+
-            '<button onclick="saveDeepSeekKey()" style="background:var(--money);color:#fff;border:none;border-radius:10px;'+
-            'padding:.65rem;font-size:.86rem;cursor:pointer;font-weight:700;width:100%;margin-top:.5rem;">'+
-            '💾 Save & Retry</button>';
-        }
-        $('ledger-results').style.display='block';
-        return;
-      }
+      console.warn('[v2 Ledger] page '+idx+' error:',e.message);
       status.textContent='Page '+(parseInt(idx)+1)+' error: '+e.message;
       await sleep(2000);
     }
   }
 
   allStudents.forEach(s=>{
-    const cls=(s.class||'UNKNOWN').toUpperCase().trim();
+    const cls=(s.class||selDetectedClass||'UNKNOWN').toUpperCase().trim();
     if(!classGroups[cls])classGroups[cls]=[];
     classGroups[cls].push(s);
   });

@@ -427,12 +427,15 @@ async function processAllLedgers(){
       status.textContent='Reading page '+(parseInt(idx)+1)+' of '+images.length+' with DeepSeek-OCR...';
       const result=await callDeepSeekOCR(compressed,keys.deepseek,keys.deepseekProvider);
       const usedDeepSeek=true;
-      console.log('[v2] DeepSeek-OCR page '+(parseInt(idx)+1)+':', result.slice(0,500));
+      window._lastOCRRaw = result;  // stored for debug display
+      console.log('[v2] DeepSeek-OCR page '+(parseInt(idx)+1)+':', result.slice(0,800));
 
       let parsed={students:[]};
       if(usedDeepSeek){
+        // Strip any special tokens DeepSeek may include
+        const cleanResult = result.replace(/<\|[^|]*\|>/g,'').trim();
         // DeepSeek-OCR returns raw markdown — use specialized parser
-        const dsStudents = parseDeepSeekOCRText(result);
+        const dsStudents = parseDeepSeekOCRText(cleanResult);
         parsed = {students: dsStudents};
         console.log('[v2] DeepSeek-OCR parsed:', dsStudents.length, 'students');
       } else {

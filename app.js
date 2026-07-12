@@ -13,7 +13,8 @@ let _dsKey='';  // DeepSeek-OCR key (optional)
 let selDetectedClass='';  // class detected from ledger header
 let timerSec=0,timerInterval=null;
 let ledgerPageCount=1,ledgerImages={};
-let allStudents=[],classGroups={},selTier=null;
+let allStudents=[];classGroups={};selDetectedClass='';
+await sleep(5000);
 
 // ── Tiers ──────────────────────────────────────────────────────────────────
 const TIERS=[
@@ -732,7 +733,7 @@ async function compressLedger(dataUrl){
     img.onload=()=>{
       let w=img.naturalWidth||img.width||1000;
       let h=img.naturalHeight||img.height||750;
-      const scale=Math.min(1,1200/w);
+      const scale=Math.min(1,800/w);
       w=Math.round(w*scale);h=Math.round(h*scale);
       const cv=document.createElement('canvas');cv.width=w;cv.height=h;
       const cx=cv.getContext('2d');

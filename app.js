@@ -722,15 +722,24 @@ async function compressLedger(dataUrl){
       const cv=document.createElement('canvas');cv.width=w;cv.height=h;
       const cx=cv.getContext('2d');
       cx.drawImage(img,0,0,w,h);
-      // Pixel-level contrast boost for handwriting
       const id=cx.getImageData(0,0,w,h);const d=id.data;
+      // Step 1: Find actual min/max brightness (auto-levels for washed-out photos)
+      let minV=255,maxV=0;
       for(let i=0;i<d.length;i+=4){
-        const gray=d[i]*.299+d[i+1]*.587+d[i+2]*.114;
-        const c=Math.max(0,Math.min(255,(gray-128)*1.6+128+10));
+        const g=Math.round(d[i]*.299+d[i+1]*.587+d[i+2]*.114);
+        if(g<minV)minV=g;if(g>maxV)maxV=g;
+      }
+      const range=Math.max(maxV-minV,1);
+      // Step 2: Stretch histogram then sharpen contrast for handwriting
+      for(let i=0;i<d.length;i+=4){
+        const g=Math.round(d[i]*.299+d[i+1]*.587+d[i+2]*.114);
+        const norm=Math.round((g-minV)/range*255);
+        // Dark pixels (ink) → push to black; bright pixels (paper) → push to white
+        const c=norm<128?Math.max(0,Math.round(norm*0.4)):Math.min(255,Math.round(128+(norm-128)*2.2));
         d[i]=c;d[i+1]=c;d[i+2]=c;
       }
       cx.putImageData(id,0,0);
-      resolve(cv.toDataURL('image/jpeg',0.92));
+      resolve(cv.toDataURL('image/jpeg',0.95));
     };
     img.onerror=reject;img.src=dataUrl;
   });
@@ -852,10 +861,18 @@ function parseDeepSeekOCRText(rawText){
       });
     }
 
-    // Validate name
+    // Validate name — must look like a person's name
     if(!name || name.length < 4) continue;
-    if(/^(BALANCE|TOTAL|GRAND|FEE|TERM|DATE|S\/N|PAGE|CLASS)/i.test(name)) continue;
+    // Skip obvious document header/label words
+    if(/^(BALANCE|TOTAL|GRAND|FEE|FEES|TERM|DATE|S\/N|SN|NO\.|PAGE|CLASS|SCHOOL|YEAR|LEDGER|SESSION|REGISTER|ACADEMIC|STUDENT|NAME|AMOUNT|PAYMENT|REMARKS|SIGNATURE|APPROVED|GREAT|GEAT|GEEK|HIGHLY)/i.test(name)) continue;
+    if(/(SCHOOL FEES|FEE LEDGER|FEES LEDGER|ACADEMIC SESSION|HIGHLY RECOM|AND HIGHLY|CURRENT TERM|BALANCE FROM)/i.test(name)) continue;
+    // Must have at least one proper name-like word (3+ letters, not a common label)
+    const LABELS=new Set(['THE','AND','FOR','FROM','WITH','THIS','THAT','FEES','TERM','YEAR','DATE','PAGE','PAID','OWING','FULL','PART','BALANCE','TOTAL','NAME','CLASS','AMOUNT','REMARKS','SUM','ALL']);
+    const nameWords=name.split(' ').filter(w=>w.length>=3&&!LABELS.has(w.toUpperCase()));
+    if(nameWords.length===0)continue;
     if(!/[A-Z]{3,}/.test(name)) continue;
+    // Must NOT be all common English words (likely a header phrase)
+    if(nameWords.every(w=>/^(GREAT|GOOD|HIGH|BEST|MOST|VERY|WELL|FULL|LAST|NEXT|THIS|THAT|FROM|WILL|WITH|INTO|OVER|UNDER|ABOVE|BELOW)$/i.test(w)))continue;
 
     const key = name.replace(/[^A-Z]/g,'');
     if(seen.has(key)) continue;

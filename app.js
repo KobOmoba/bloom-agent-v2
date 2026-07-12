@@ -423,12 +423,36 @@ async function processAllLedgers(){
     status.textContent='Reading page '+(parseInt(idx)+1)+' of '+images.length+'...';
     try{
       const compressed=await compressLedger(url);
-      // DeepSeek-OCR only — no fallback
-      status.textContent='Reading page '+(parseInt(idx)+1)+' of '+images.length+' with DeepSeek-OCR...';
-      const result=await callDeepSeekOCR(compressed,keys.deepseek,keys.deepseekProvider);
+      // Step 1: DeepSeek-OCR converts image to raw text/markdown
+      status.textContent='Step 1/2: DeepSeek-OCR reading page '+(parseInt(idx)+1)+'...';
+      const ocrRaw=await callDeepSeekOCR(compressed,keys.deepseek,keys.deepseekProvider);
+      window._lastOCRRaw=ocrRaw;
+      console.log('[v2] DeepSeek-OCR raw:', ocrRaw.slice(0,800));
+      // Step 2: Groq text model extracts structured names from the raw text
+      let result=ocrRaw;
+      if(keys.groq && ocrRaw && ocrRaw.length>10){
+        status.textContent='Step 2/2: Groq extracting student names...';
+        try{
+          const extractPrompt=[
+            'The following is raw OCR text from a Nigerian school fee register (handwritten ledger).',
+            'Extract ALL student names you can find. These are Nigerian names like ADEYEMI, IBRAHIM, OKONKWO, CECILIA, etc.',
+            'Ignore header words like SCHOOL, FEES, LEDGER, YEAR, BALANCE, TERM, DATE, BASIC, CLASS, S/N, TOTAL.',
+            '',
+            'RAW OCR TEXT:',
+            ocrRaw,
+            '',
+            'Return valid JSON ONLY:',
+            '{"students":[{"name":"SURNAME FIRSTNAME","class":"BASIC 4","balance":0,"termFees":28000,"paid":28000,"status":"FULLY PAID"}]}',
+            'If you cannot find any student names, return {"students":[]}'
+          ].join('\n');
+          result=await callGroqText(extractPrompt,keys.groq);
+          console.log('[v2] Groq extraction result:', result.slice(0,500));
+        }catch(e2){
+          console.warn('[v2] Groq extraction failed, falling back to direct parse:',e2.message);
+          result=ocrRaw;
+        }
+      }
       const usedDeepSeek=true;
-      window._lastOCRRaw = result;  // stored for debug display
-      console.log('[v2] DeepSeek-OCR page '+(parseInt(idx)+1)+':', result.slice(0,800));
 
       let parsed={students:[]};
       if(usedDeepSeek){
@@ -767,6 +791,27 @@ async function compressImage(dataUrl,maxW){
 // ── Gemini Vision — purpose-built for document/handwriting OCR ────────────
 
 // ── DeepSeek-OCR — providers: regolo (default), novita, deepinfra, siliconflow ─
+
+// ── Groq text-only extraction (no image) ─────────────────────────────────
+async function callGroqText(prompt, apiKey){
+  const resp = await fetch('https://api.groq.com/openai/v1/chat/completions',{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
+    body:JSON.stringify({
+      model:'qwen/qwen3.6-27b',
+      max_tokens:3000,
+      temperature:0.1,
+      reasoning_format:'hidden',
+      messages:[{role:'user',content:prompt}]
+    })
+  });
+  if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'Groq text '+resp.status);}
+  const d=await resp.json();
+  let t=d.choices?.[0]?.message?.content||'';
+  t=t.replace(/<think>[\s\S]*?<\/think>/g,'').trim();
+  return t;
+}
+
 async function callDeepSeekOCR(imageDataUrl, apiKey, provider){
   provider = provider || 'regolo';
   const base64 = imageDataUrl.split(',')[1];

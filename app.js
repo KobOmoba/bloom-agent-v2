@@ -13,9 +13,7 @@ let _dsKey='';  // DeepSeek-OCR key (optional)
 let selDetectedClass='';  // class detected from ledger header
 let timerSec=0,timerInterval=null;
 let ledgerPageCount=1,ledgerImages={};
-let allStudents=[];classGroups={};selDetectedClass='';
-await sleep(5000);
-
+let allStudents=[];classGroups={};selDetectedClass='';await sleep(5000);
 // ── Tiers ──────────────────────────────────────────────────────────────────
 const TIERS=[
   {max:50,   price:10000, name:'Starter (1-50)'},

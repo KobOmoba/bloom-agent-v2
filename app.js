@@ -152,29 +152,22 @@ function startApp(){
 function logout(){if(!confirm('Logout?'))return;localStorage.removeItem('ag2_agent');location.reload();}
 
 // ── API Keys ───────────────────────────────────────────────────────────────
-async function _getApiKeys(){
+async async function _getApiKeys(){
   if(apiKeys)return apiKeys;
-  const localDs = localStorage.getItem('ag2_dsKey')||'';
-  const localProv = localStorage.getItem('ag2_dsProv')||'regolo';
-  let fsDs='', fsProv='siliconflow', fsGroq='';
+  let fsGroq='',fsMistral='',fsTogether='',fsHF='';
   if(db){
     try{
       const doc=await db.collection('admin_settings').doc('main').get();
       if(doc.exists){
         const d=doc.data();
-        fsDs=d.deepseekApiKey||'';
-        fsProv=d.deepseekProvider||'siliconflow';
-        fsGroq=d.groqApiKey||'';
+        fsGroq     = d.groqApiKey    ||'';
+        fsMistral  = d.mistralApiKey ||'';
+        fsTogether = d.togetherApiKey||'';
+        fsHF       = d.hfApiKey      ||'';
       }
-    }catch(e){console.warn('Settings fetch:',e.message);}
+    }catch(e){console.warn('Keys fetch:',e.message);}
   }
-  const dsKey  = localDs || fsDs;
-  const dsProv = localDs ? localProv : fsProv;
-  if(dsKey && !localDs){
-    localStorage.setItem('ag2_dsKey', dsKey);
-    localStorage.setItem('ag2_dsProv', dsProv);
-  }
-  apiKeys={deepseek:dsKey, deepseekProvider:dsProv, groq:fsGroq, gemini:'', hf:''};
+  apiKeys={groq:fsGroq, mistral:fsMistral, together:fsTogether, hf:fsHF};
   return apiKeys;
 }
 
@@ -363,140 +356,152 @@ async function processAllLedgers(){
   const prog=$('ledger-prog'),status=$('ledger-status');
   prog.style.width='5%';
 
-  let groqKey='';
-  if(db){
-    try{
-      const doc=await db.collection('admin_settings').doc('main').get();
-      if(doc.exists){groqKey=doc.data().groqApiKey||'';}
-    }catch(e){console.warn('Key fetch:',e.message);}
-  }
-  if(!groqKey&&apiKeys&&apiKeys.groq)groqKey=apiKeys.groq;
-
-  if(!groqKey){
+  // ── Fetch all 4 provider keys once ─────────────────────────────────────
+  const keys=await _getApiKeys();
+  const hasAnyKey=keys.groq||keys.mistral||keys.together||keys.hf;
+  if(!hasAnyKey){
     $('ledger-proc').style.display='none';
     const dbg=$('ocr-debug');
     if(dbg){
       dbg.style.display='block';
-      dbg.innerHTML='<div style="font-weight:700;color:var(--danger);margin-bottom:.5rem;">⚠️ Groq key not found</div>'+
-        '<p style="font-size:.75rem;color:var(--sub);">Ask Bayo to add groqApiKey to Firestore admin_settings → main.</p>';
+      dbg.innerHTML='<div style="font-weight:700;color:var(--danger);margin-bottom:.5rem;">⚠️ No OCR keys found</div>'+
+        '<p style="font-size:.75rem;color:var(--sub);">Ask Bayo to add at least one of these to Firestore admin_settings → main:<br>'+
+        '<strong>groqApiKey</strong> (Groq) · <strong>mistralApiKey</strong> (Mistral) · '+
+        '<strong>togetherApiKey</strong> (Together AI) · <strong>hfApiKey</strong> (HuggingFace)</p>';
     }
     $('ledger-results').style.display='block';
     return;
   }
 
   const LEDGER_PROMPT=[
-    'You are reading a Nigerian school fee payment ledger (handwritten).',
-    'Columns: SERIAL NO | NAMES | BALANCE FROM LAST TERM | CURRENT TERMS FEES |',
-    'TOTAL | 1ST PART PAYMENT | TELLER NO | DATE | 2ND PART PAYMENT |',
-    'TELLER NO | DATE | 3RD PART PAYMENT | TELLER NO | DATE',
+    'You are reading a Nigerian school fee payment ledger (handwritten, photographed from above).',
     '',
-    'YOUR TASK: Extract EVERY student record. Read ALL rows. Do not stop early.',
+    'COLUMN STRUCTURE left-to-right:',
+    '  Col 1: SERIAL NO (row number)',
+    '  Col 2: SURNAME (family name)',
+    '  Col 3: FIRSTNAME (given name)',
+    '  Col 4: BALANCE FROM LAST TERM (debt carried forward — 0 if blank)',
+    '  Col 5: CURRENT TERM FEES (e.g. 24000, 26000, 28000)',
+    '  Col 6: TOTAL (col4 + col5)',
+    '  Col 7+: Payment columns — READ TO SUM PAID (1ST PART, 2ND PART, 3RD PART)',
     '',
-    'Nigerian surnames: OGUNLADE, KASALI, ALAWODE, OYESANWO, OGUNDEYI, ALAO,',
-    'AKINWANDE, OLAWALE, SHONPE, GBELEKALE, OLIYIDE, KOLANOLE, ADENIYI, OBASA,',
-    'OLATUNDE, LAWAL, OGUNDETI, OYERINDE, ILELABOYE, AFOLABI, DADA, MOSES,',
-    'OYEBOLA, ADERIBIGBE, OLAYINOLA, IDOWU, ATAJA, AWOLOWO, ADEKUNLE,',
-    'OGUNSOLA, JOHN, ADEOYE, SABIU, ALIMI',
+    'YOUR TASK: For every numbered student row extract:',
+    '  name = SURNAME + space + FIRSTNAME (both from cols 2-3)',
+    '  balance = col 4 (0 if blank/dash)',
+    '  termFees = col 5',
+    '  paid = SUM of 1st part + 2nd part + 3rd part payments (cols 7, 10, 13)',
+    '  status = "FULLY PAID" if "FULLY PAID" or "FULLY" or "F/PAID" written on row',
+    '           "PART PAID" if paid > 0 but paid < total',
+    '           "OWING" if paid = 0',
+    '  detected_class = class label at top of page (e.g. "K-G", "BASIC FOUR", "NURSERY 1")',
     '',
-    'Nigerian firstnames: GIFT, SUCCESS, EZEKIEL, AIWAL, LAWAL, EMMANUEL,',
-    'RASHEEDAT, KHALEED, ABDULLAHI, SALAM, OYEDEPO, WAJUD, MICHEAL, IBRAHIM,',
-    'RAHMON, AISHAT, CHRISTIANA, AFEEZ, DOMINION, SAMUEL, MALEEK, PATHIA,',
-    'INIOLUWA, QUARIBAT, GOLD, TOHEEB, ADEOLA, GODWIN, ELIZABETH, TIBESIMI,',
-    'WASLAT, MOZEED, DEBORAH, SHINDARA, GABRIEL, RASAQ, ENOCH, ABIGEAL,',
-    'KOREDE, ADEMIDE, AMINDAT, WIQUYAT, ISREA, DORCAS, MARIAM, CYNTHIA, AMINAT',
+    'Nigerian SURNAMES: OGUNDETI, OYERINDE, OLATUNDE, OBASA, OKENDINMI, ILELABOYE, AFOLABI,',
+    'OLIYIDE, KOLANDLE, ADEGUNLE, ADEOYE, SABIU, OGUNLADE, ALIMI, JOHN, AKINOLA, KASALI,',
+    'ALAWODE, OYESANWO, OGUNDEYI, ALAO, AKINWANDE, OLAWALE, ODEREYE, AKINBELE, ADEBAYO,',
+    'AYANDIYA, SHONIPE, GBELEKALE, FAFIOLU, DADA, MOSES, OYEBOLA, ADERIBIGBE, LAWAL,',
+    'OLAYINOLA, IDOWU, ATAJA, AWOLOWO, ADEKUNLE, OGUNSOLA, ADENIYI, AKINDELE',
     '',
-    'Rules:',
-    '1. NAMES column is always SURNAME FIRSTNAME — combine them',
-    '2. balance = amount carried from last term (0 if none)',
-    '3. termFees = current term fee amount',
-    '4. paid = sum of all part payments made so far this term',
-    '5. status = "FULLY PAID" if fully settled, "PART PAID" if partial, "OWING" if nothing paid',
-    '6. If "FULLY PAID" is written anywhere on the row — status is FULLY PAID',
-    '7. Crossed out figures — use the final corrected amount',
-    '8. class = the class label at top of page e.g. KG, BASIC 1, NURSERY 2',
-    '9. Read EVERY row — registers have 10-25 students per page',
+    'Nigerian FIRSTNAMES: SALAM, OYEDEPO, WAJUD, MICHEAL, IBRAHIM, RAHMON, AISHAT,',
+    'CHRISTIANA, AFEEZ, DOMINION, SAMUEL, MALEEK, FATHIA, INIOLUWA, QUARIBAT, AWAL,',
+    'GOLD, TOHEEB, GODWIN, ELIZABETH, TIBESIMI, WASLAT, MOZEED, DEBORAH, SHINDARA,',
+    'GABRIEL, RASAQ, ENOCH, ABIGEAL, KOREDE, ADEMIDE, AMINDAT, WIQUYAT, ISREA, DORCAS,',
+    'MARIAM, CYNTHIA, AMINAT, FATOBI, MUSTEQEEM, GIFT, SUCCESS, RASHEEDAT',
     '',
-    'Return ONLY valid JSON — no explanation no markdown:',
-    '{"detected_class":"BASIC 4","students":[',
-    '{"name":"OGUNLADE MICHEAL","balance":0,"termFees":24000,"paid":24000,"status":"FULLY PAID"},',
+    'RULES:',
+    '1. IGNORE crossed-out numbers — read the final corrected value written nearby.',
+    '2. "BALANCE" written in a payment cell = outstanding debt note, not a payment.',
+    '3. Every numbered row is one student — read ALL rows, do not stop early.',
+    '4. A typical page has 10–30 students.',
+    '5. Return ONLY valid JSON — no markdown fences, no explanation.',
+    '',
+    'FORMAT:',
+    '{"detected_class":"K-G","students":[',
+    '{"name":"OLIYIDE GODWIN","balance":0,"termFees":24000,"paid":24000,"status":"FULLY PAID"},',
     '{"name":"KASALI RASAQ","balance":5000,"termFees":24000,"paid":17000,"status":"PART PAID"},',
     '{"name":"JOHN DEBORAH","balance":3000,"termFees":26000,"paid":4000,"status":"OWING"}',
     ']}'
   ].join('\n');
 
   allStudents=[];classGroups={};selDetectedClass='';
-  await sleep(5000);
+
+  // Build cascade in priority order — skip providers with no key
+  function buildCascade(imgUrl){
+    const cascade=[];
+    if(keys.groq)    cascade.push({name:'Groq',        fn:()=>callGroqVision(imgUrl,LEDGER_PROMPT,keys.groq)});
+    if(keys.mistral) cascade.push({name:'Mistral',      fn:()=>callMistralVision(imgUrl,LEDGER_PROMPT,keys.mistral)});
+    if(keys.together)cascade.push({name:'Together AI',  fn:()=>callTogetherVision(imgUrl,LEDGER_PROMPT,keys.together)});
+    // HF is always last — works without a key (rate-limited but functional)
+    cascade.push({name:'HuggingFace', fn:()=>callHFVision(imgUrl,LEDGER_PROMPT,keys.hf||'')});
+    return cascade;
+  }
+
+  await new Promise(r=>setTimeout(r,2000));
 
   for(let i=0;i<images.length;i++){
     const[idx,url]=images[i];
+    const pageNum=parseInt(idx)+1;
     prog.style.width=Math.round((i/images.length)*85)+'%';
-    status.textContent='Reading page '+(parseInt(idx)+1)+' of '+images.length+'...';
 
     if(i>0){
       for(let s=15;s>0;s--){
-        status.textContent='Cooldown ('+s+'s) before page '+(parseInt(idx)+1)+'...';
-        await sleep(1000);
+        status.textContent='Cooldown ('+s+'s) before page '+pageNum+'...';
+        await new Promise(r=>setTimeout(r,1000));
       }
     }
 
-    try{
-      const compressed=await compressLedger(url);
-      const b64=compressed.split(',')[1];
-      const resp=await fetch('https://api.groq.com/openai/v1/chat/completions',{
-        method:'POST',
-        headers:{'Content-Type':'application/json','Authorization':'Bearer '+groqKey},
-        body:JSON.stringify({
-          model:'qwen/qwen3.6-27b',
-          messages:[{role:'user',content:[
-            {type:'image_url',image_url:{url:'data:image/jpeg;base64,'+b64}},
-            {type:'text',text:LEDGER_PROMPT}
-          ]}],
-          temperature:0.1,
-          max_tokens:2000,
-          reasoning_format:'hidden'
-        })
-      });
+    status.textContent='Compressing page '+pageNum+'...';
+    let compressed;
+    try{compressed=await compressLedger(url);}
+    catch(e){console.warn('Compress failed:',e.message);compressed=url;}
 
-      if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.error?.message||'Groq '+resp.status);}
-      const data=await resp.json();
-      let text=(data.choices?.[0]?.message?.content||'').trim();
-      text=text.replace(/<think>[\s\S]*?<\/think>/gi,'').trim();
-      window._lastOCRRaw=text;
-      console.log('[v2 Ledger] page '+(parseInt(idx)+1)+' raw:',text.slice(0,400));
+    // Try each provider in cascade until one returns students
+    const cascade=buildCascade(compressed);
+    let pageStudents=[];
+    let pageClass='';
+    let succeeded=false;
 
-      let parsed={};
-      try{parsed=JSON.parse(text);}
-      catch(e){
-        const m=text.match(/\{[\s\S]*\}/);
-        try{parsed=m?JSON.parse(m[0]):{};}catch(e2){parsed={};}
+    for(const provider of cascade){
+      status.textContent='Page '+pageNum+'/'+images.length+' → trying '+provider.name+'...';
+      try{
+        const rawText=await provider.fn();
+        const result=parseLedgerJSON(rawText);
+        if(result.students.length>0){
+          pageStudents=result.students;
+          pageClass=result.detected_class;
+          console.log('[v2 Ledger] '+provider.name+' page '+pageNum+': '+pageStudents.length+' students');
+          succeeded=true;
+          break;
+        }
+        console.warn('[v2 Ledger] '+provider.name+' page '+pageNum+': 0 students — trying next');
+      }catch(e){
+        console.warn('[v2 Ledger] '+provider.name+' page '+pageNum+' error:',e.message);
       }
-
-      if(parsed.detected_class){
-        const dc=String(parsed.detected_class).trim().toUpperCase();
-        if(dc&&dc!=='NULL'&&dc!=='UNKNOWN')selDetectedClass=dc;
-      }
-
-      const students=parsed.students||[];
-      console.log('[v2 Ledger] students page '+(parseInt(idx)+1)+':',students.length);
-
-      const seenNames=new Set(allStudents.map(s=>s.name.toLowerCase().replace(/[^a-z]/g,'')));
-      students.forEach(s=>{
-        if(!s.name||s.name.length<2)return;
-        s.name=s.name.toUpperCase().replace(/[^A-Z\s'\-.]/g,'').replace(/\s+/g,' ').trim();
-        if(!s.name||s.name.length<2)return;
-        const key=s.name.toLowerCase().replace(/[^a-z]/g,'');
-        if(seenNames.has(key))return;
-        seenNames.add(key);
-        s.class=s.class||selDetectedClass||'UNKNOWN';
-        s.confidence=calcConf(s);
-        allStudents.push(s);
-        addLiveItem(liveContent,s);
-      });
-    }catch(e){
-      console.warn('[v2 Ledger] page '+idx+' error:',e.message);
-      status.textContent='Page '+(parseInt(idx)+1)+' error: '+e.message;
-      await sleep(2000);
     }
+
+    if(!succeeded){
+      status.textContent='Page '+pageNum+': all providers returned 0 students';
+      await new Promise(r=>setTimeout(r,1500));
+    }
+
+    if(pageClass){
+      const dc=String(pageClass).trim().toUpperCase();
+      if(dc&&dc!=='NULL'&&dc!=='UNKNOWN')selDetectedClass=dc;
+    }
+
+    // Deduplicate and merge into allStudents
+    const seenNames=new Set(allStudents.map(s=>s.name.toLowerCase().replace(/[^a-z]/g,'')));
+    pageStudents.forEach(s=>{
+      if(!s.name||s.name.length<2)return;
+      s.name=s.name.toUpperCase().replace(/[^A-Z\s'\-.]/g,'').replace(/\s+/g,' ').trim();
+      if(!s.name||s.name.length<2)return;
+      const key=s.name.toLowerCase().replace(/[^a-z]/g,'');
+      if(seenNames.has(key))return;
+      seenNames.add(key);
+      s.class=s.class||selDetectedClass||'UNKNOWN';
+      s.confidence=calcConf(s);
+      allStudents.push(s);
+      addLiveItem(liveContent,s);
+    });
   }
 
   allStudents.forEach(s=>{
@@ -510,6 +515,8 @@ async function processAllLedgers(){
   status.textContent='Done — '+allStudents.length+' students found';
   setTimeout(()=>{$('ledger-proc').style.display='none';showLedgerResults();},800);
 }
+
+
 
 function calcConf(s){
   let c=50;
@@ -794,6 +801,94 @@ async function callGeminiVision(imageDataUrl,prompt,apiKey){
   const data=await resp.json();
   const text=data.candidates?.[0]?.content?.parts?.[0]?.text||'';
   return text.trim();
+}
+
+// ── Parse ledger JSON from any provider's text response ───────────────────
+function parseLedgerJSON(text){
+  text=text.replace(/<think>[\s\S]*?<\/think>/gi,'').trim();
+  window._lastOCRRaw=text;
+  let parsed={};
+  try{parsed=JSON.parse(text);}
+  catch(e){
+    const m=text.match(/\{[\s\S]*\}/);
+    try{parsed=m?JSON.parse(m[0]):{};}catch(e2){parsed={};}
+  }
+  return{
+    detected_class:parsed.detected_class||'',
+    students:Array.isArray(parsed.students)?parsed.students:[]
+  };
+}
+
+// ── Mistral Pixtral Vision ────────────────────────────────────────────────
+async function callMistralVision(imageDataUrl,prompt,apiKey){
+  if(!apiKey)throw new Error('No Mistral key');
+  const base64=imageDataUrl.split(',')[1];
+  const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
+  const resp=await fetch('https://api.mistral.ai/v1/chat/completions',{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
+    body:JSON.stringify({
+      model:'pixtral-12b-2409',
+      max_tokens:3000,temperature:0.1,
+      messages:[{role:'user',content:[
+        {type:'image_url',image_url:{url:'data:'+mimeType+';base64,'+base64}},
+        {type:'text',text:prompt}
+      ]}]
+    })
+  });
+  if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.message||'Mistral '+resp.status);}
+  const data=await resp.json();
+  return(data.choices?.[0]?.message?.content||'').trim();
+}
+
+// ── Together AI — Llama 3.2 Vision ────────────────────────────────────────
+async function callTogetherVision(imageDataUrl,prompt,apiKey){
+  if(!apiKey)throw new Error('No Together key');
+  const base64=imageDataUrl.split(',')[1];
+  const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
+  const resp=await fetch('https://api.together.xyz/v1/chat/completions',{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
+    body:JSON.stringify({
+      model:'meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo',
+      max_tokens:3000,temperature:0.1,
+      messages:[{role:'user',content:[
+        {type:'image_url',image_url:{url:'data:'+mimeType+';base64,'+base64}},
+        {type:'text',text:prompt}
+      ]}]
+    })
+  });
+  if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.error?.message||'Together '+resp.status);}
+  const data=await resp.json();
+  return(data.choices?.[0]?.message?.content||'').trim();
+}
+
+// ── HuggingFace — Qwen2.5-VL-7B-Instruct ────────────────────────────────
+async function callHFVision(imageDataUrl,prompt,apiKey){
+  const base64=imageDataUrl.split(',')[1];
+  const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
+  const HF_URL='https://api-inference.huggingface.co/models/Qwen/Qwen2.5-VL-7B-Instruct/v1/chat/completions';
+  const headers={'Content-Type':'application/json'};
+  if(apiKey)headers['Authorization']='Bearer '+apiKey;
+  const body=JSON.stringify({
+    model:'Qwen/Qwen2.5-VL-7B-Instruct',
+    max_tokens:2000,temperature:0.1,
+    messages:[{role:'user',content:[
+      {type:'image_url',image_url:{url:'data:'+mimeType+';base64,'+base64}},
+      {type:'text',text:prompt}
+    ]}]
+  });
+  let resp=await fetch(HF_URL,{method:'POST',headers,body});
+  if(resp.status===503){
+    const errData=await resp.json().catch(()=>({}));
+    const wait=Math.min((errData.estimated_time||20)*1000,35000);
+    console.log('[HF] Cold start — waiting',Math.round(wait/1000)+'s');
+    await new Promise(r=>setTimeout(r,wait));
+    resp=await fetch(HF_URL,{method:'POST',headers,body});
+  }
+  if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.error?.message||'HF '+resp.status);}
+  const data=await resp.json();
+  return(data.choices?.[0]?.message?.content||'').trim();
 }
 
 async function callGroqVision(imageDataUrl,prompt,apiKey){

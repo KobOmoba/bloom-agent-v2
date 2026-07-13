@@ -443,6 +443,7 @@ async function processAllLedgers(){
   ].join('\n');
 
   allStudents=[];classGroups={};selDetectedClass='';
+await sleep(5000);
 
   for(let i=0;i<images.length;i++){
     const[idx,url]=images[i];

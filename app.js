@@ -374,51 +374,49 @@ async function processAllLedgers(){
   }
 
   const LEDGER_PROMPT=[
-    'You are reading a Nigerian school fee payment ledger (handwritten, photographed from above).',
-    '',
-    'COLUMN STRUCTURE left-to-right:',
-    '  Col 1: SERIAL NO (row number)',
+    // This image is the LEFT HALF of a Nigerian school fees ledger.',
+    // Cropped to show ONLY: Serial No | Surname | Firstname | Balance B/F | Current Fees | Total',
+    // Payment installment columns have been removed from the image — do not look for them.',
+    'You are reading the LEFT SECTION of a Nigerian school fees ledger (handwritten).',
+    'The image shows these columns left-to-right:',
+    '  Col 1: SERIAL NO (1, 2, 3...)',
     '  Col 2: SURNAME (family name)',
     '  Col 3: FIRSTNAME (given name)',
-    '  Col 4: BALANCE FROM LAST TERM (debt carried forward — 0 if blank)',
-    '  Col 5: CURRENT TERM FEES (e.g. 24000, 26000, 28000)',
-    '  Col 6: TOTAL (col4 + col5)',
-    '  Col 7+: Payment columns — READ TO SUM PAID (1ST PART, 2ND PART, 3RD PART)',
+    '  Col 4: BALANCE FROM LAST TERM (debt carried forward — 0 or blank means none)',
+    '  Col 5: CURRENT TERM FEES (the fee charged this term, e.g. 24000, 26000, 28000)',
+    '  Col 6: TOTAL (col4 + col5 = everything this student owes)',
     '',
-    'YOUR TASK: For every numbered student row extract:',
-    '  name = SURNAME + space + FIRSTNAME (both from cols 2-3)',
-    '  balance = col 4 (0 if blank/dash)',
-    '  termFees = col 5',
-    '  paid = SUM of 1st part + 2nd part + 3rd part payments (cols 7, 10, 13)',
-    '  status = "FULLY PAID" if "FULLY PAID" or "FULLY" or "F/PAID" written on row',
-    '           "PART PAID" if paid > 0 but paid < total',
-    '           "OWING" if paid = 0',
-    '  detected_class = class label at top of page (e.g. "K-G", "BASIC FOUR", "NURSERY 1")',
+    'YOUR TASK: For every numbered student row return:',
+    '  name        = SURNAME + space + FIRSTNAME',
+    '  balance_bf  = col 4 value (integer, 0 if blank or dash)',
+    '  termFees    = col 5 value (integer)',
+    '  total       = col 6 value (integer)',
+    '  fully_paid  = true if the word FULLY or FULLY PAID or F/PAID appears anywhere on that row',
+    '  detected_class = class label written at the top of the page (e.g. K-G, BASIC FOUR, NURSERY 1)',
     '',
-    'Nigerian SURNAMES: OGUNDETI, OYERINDE, OLATUNDE, OBASA, OKENDINMI, ILELABOYE, AFOLABI,',
-    'OLIYIDE, KOLANDLE, ADEGUNLE, ADEOYE, SABIU, OGUNLADE, ALIMI, JOHN, AKINOLA, KASALI,',
-    'ALAWODE, OYESANWO, OGUNDEYI, ALAO, AKINWANDE, OLAWALE, ODEREYE, AKINBELE, ADEBAYO,',
-    'AYANDIYA, SHONIPE, GBELEKALE, FAFIOLU, DADA, MOSES, OYEBOLA, ADERIBIGBE, LAWAL,',
-    'OLAYINOLA, IDOWU, ATAJA, AWOLOWO, ADEKUNLE, OGUNSOLA, ADENIYI, AKINDELE',
+    'Nigerian SURNAMES (common): OGUNDETI, OYERINDE, OLATUNDE, OBASA, OKENDINMI, ILELABOYE,',
+    'AFOLABI, OLIYIDE, KOLANDLE, ADEGUNLE, ADEOYE, SABIU, OGUNLADE, ALIMI, JOHN, AKINOLA,',
+    'KASALI, ALAWODE, OYESANWO, OGUNDEYI, ALAO, AKINWANDE, OLAWALE, ODEREYE, AKINBELE,',
+    'ADEBAYO, AYANDIYA, SHONIPE, GBELEKALE, FAFIOLU, DADA, MOSES, OYEBOLA, ADERIBIGBE,',
+    'LAWAL, OLAYINOLA, IDOWU, ATAJA, AWOLOWO, AKINDELE, OGUNSOLA',
     '',
-    'Nigerian FIRSTNAMES: SALAM, OYEDEPO, WAJUD, MICHEAL, IBRAHIM, RAHMON, AISHAT,',
-    'CHRISTIANA, AFEEZ, DOMINION, SAMUEL, MALEEK, FATHIA, INIOLUWA, QUARIBAT, AWAL,',
-    'GOLD, TOHEEB, GODWIN, ELIZABETH, TIBESIMI, WASLAT, MOZEED, DEBORAH, SHINDARA,',
-    'GABRIEL, RASAQ, ENOCH, ABIGEAL, KOREDE, ADEMIDE, AMINDAT, WIQUYAT, ISREA, DORCAS,',
-    'MARIAM, CYNTHIA, AMINAT, FATOBI, MUSTEQEEM, GIFT, SUCCESS, RASHEEDAT',
+    'Nigerian FIRSTNAMES (common): SALAM, OYEDEPO, WAJUD, MICHEAL, IBRAHIM, RAHMON, AISHAT,',
+    'CHRISTIANA, AFEEZ, DOMINION, SAMUEL, MALEEK, FATHIA, INIOLUWA, QUARIBAT, AWAL, GOLD,',
+    'TOHEEB, GODWIN, ELIZABETH, TIBESIMI, WASLAT, MOZEED, DEBORAH, SHINDARA, GABRIEL,',
+    'RASAQ, ENOCH, ABIGEAL, KOREDE, ADEMIDE, AMINDAT, WIQUYAT, ISREA, DORCAS, MARIAM,',
+    'CYNTHIA, AMINAT, FATOBI, MUSTEQEEM, GIFT, SUCCESS, RASHEEDAT, KOREDE',
     '',
     'RULES:',
-    '1. IGNORE crossed-out numbers — read the final corrected value written nearby.',
-    '2. "BALANCE" written in a payment cell = outstanding debt note, not a payment.',
-    '3. Every numbered row is one student — read ALL rows, do not stop early.',
-    '4. A typical page has 10–30 students.',
-    '5. Return ONLY valid JSON — no markdown fences, no explanation.',
+    '1. Every numbered row = one student. Read ALL rows. A page typically has 10-30 students.',
+    '2. Crossed-out numbers: ignore the crossed-out value, read the correction written nearby.',
+    '3. BALANCE written in a cell = a note about outstanding debt, not a payment received.',
+    '4. Return ONLY valid JSON — no markdown fences, no explanation text.',
     '',
-    'FORMAT:',
+    'EXAMPLE OUTPUT:',
     '{"detected_class":"K-G","students":[',
-    '{"name":"OLIYIDE GODWIN","balance":0,"termFees":24000,"paid":24000,"status":"FULLY PAID"},',
-    '{"name":"KASALI RASAQ","balance":5000,"termFees":24000,"paid":17000,"status":"PART PAID"},',
-    '{"name":"JOHN DEBORAH","balance":3000,"termFees":26000,"paid":4000,"status":"OWING"}',
+    '{"name":"OLIYIDE GODWIN","balance_bf":0,"termFees":24000,"total":24000,"fully_paid":true},',
+    '{"name":"KASALI RASAQ","balance_bf":5000,"termFees":24000,"total":29000,"fully_paid":false},',
+    '{"name":"JOHN DEBORAH","balance_bf":3000,"termFees":26000,"total":29000,"fully_paid":false}',
     ']}'
   ].join('\n');
 
@@ -497,6 +495,17 @@ async function processAllLedgers(){
       const key=s.name.toLowerCase().replace(/[^a-z]/g,'');
       if(seenNames.has(key))return;
       seenNames.add(key);
+      // Payment columns were cropped out — derive paid/status from fully_paid flag
+      s.termFees = s.termFees||s.total||0;
+      s.balance  = s.balance_bf||s.balance||0;
+      s.total    = s.total||(s.termFees+s.balance);
+      if(s.fully_paid){
+        s.paid   = s.total;
+        s.status = 'FULLY PAID';
+      } else {
+        s.paid   = s.paid||0;
+        s.status = s.paid>0?'PART PAID':'OWING';
+      }
       s.class=s.class||selDetectedClass||'UNKNOWN';
       s.confidence=calcConf(s);
       allStudents.push(s);
@@ -716,14 +725,24 @@ async function compressLedger(dataUrl){
   return new Promise((resolve,reject)=>{
     const img=new Image();
     img.onload=()=>{
-      let w=img.naturalWidth||img.width||1000;
-      let h=img.naturalHeight||img.height||750;
-      const scale=Math.min(1,800/w);
-      w=Math.round(w*scale);h=Math.round(h*scale);
-      const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+      const origW=img.naturalWidth||img.width||1000;
+      const origH=img.naturalHeight||img.height||750;
+      // ── KEY FIX: Crop to LEFT 50% before scaling ──────────────────────
+      // The ledger has ~14 columns. The critical ones (Serial, Names,
+      // Balance, Current Fees, Total) all live in the LEFT half.
+      // Payment installment columns (7-14) that confuse OCR are RIGHT half.
+      // By cropping left 50% THEN scaling to 800px, each critical column
+      // is ~2x larger in the final image → Groq reads it cleanly every time.
+      const cropW=Math.round(origW*0.50);
+      const scale=Math.min(1,800/cropW);
+      const outW=Math.round(cropW*scale);
+      const outH=Math.round(origH*scale);
+      const cv=document.createElement('canvas');cv.width=outW;cv.height=outH;
       const cx=cv.getContext('2d');
-      cx.drawImage(img,0,0,w,h);
-      const id=cx.getImageData(0,0,w,h);const d=id.data;
+      // Draw only the left half of the original image
+      cx.drawImage(img,0,0,cropW,origH,0,0,outW,outH);
+      // Contrast enhancement — darken text, brighten paper
+      const id=cx.getImageData(0,0,outW,outH);const d=id.data;
       let minV=255,maxV=0;
       for(let i=0;i<d.length;i+=4){
         const g=Math.round(d[i]*.299+d[i+1]*.587+d[i+2]*.114);

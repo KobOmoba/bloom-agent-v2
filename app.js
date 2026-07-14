@@ -97,6 +97,10 @@ async function doLogin(){
     }catch(e){localStorage.removeItem('ag2_agent');}
   }
 
+  // ── AUTHORIZATION SUSPENDED FOR TESTING ──────────────────────────────────
+  // Any valid phone number gets in as a guest agent. Registered agents still
+  // get their real profile. Re-enable Firestore check when testing is done.
+  let foundInDb = false;
   if(db){
     try{
       const[s1,s2]=await Promise.all([
@@ -108,14 +112,15 @@ async function doLogin(){
       if(docs.length){
         agent={id:docs[0].id,...docs[0].data()};
         localStorage.setItem('ag2_agent',JSON.stringify(agent));
-        startApp();btn.textContent='▶ Login';btn.disabled=false;
-        return;
+        foundInDb=true;
       }
     }catch(e){console.warn('DB lookup:',e.message);}
   }
-
-  agent={id:'guest_'+phone,name:'Agent ('+localFmt+')',phone:localFmt,commission:20,_guest:true};
-  localStorage.setItem('ag2_agent',JSON.stringify(agent));
+  if(!foundInDb){
+    // Not in DB — enter as guest (auth suspended for testing)
+    agent={id:'guest_'+phone,name:'Test Agent ('+localFmt+')',phone:localFmt,commission:20,_guest:true};
+    localStorage.setItem('ag2_agent',JSON.stringify(agent));
+  }
   startApp();
   btn.textContent='▶ Login';btn.disabled=false;
 }
@@ -152,7 +157,7 @@ function startApp(){
 function logout(){if(!confirm('Logout?'))return;localStorage.removeItem('ag2_agent');location.reload();}
 
 // ── API Keys ───────────────────────────────────────────────────────────────
-async async function _getApiKeys(){
+async function _getApiKeys(){
   if(apiKeys)return apiKeys;
   let fsGroq='',fsMistral='',fsTogether='',fsHF='';
   if(db){

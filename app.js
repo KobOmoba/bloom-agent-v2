@@ -721,7 +721,134 @@ async function renderDeals(){
 }
 
 // ── Image Utilities ────────────────────────────────────────────────────────
+// ── OpenCV 5.0 — Ledger Image Preprocessing ─────────────────────────────────
+// Loads opencv.js on demand (first use only, ~7MB, cached after that).
+// Tries OpenCV 5.0 first, falls back to 4.10.0 if not yet available on CDN.
+let _cvLoaded=false;
+function loadOpenCV(){
+  return new Promise((resolve,reject)=>{
+    if(_cvLoaded&&window.cv&&cv.Mat){resolve();return;}
+    if(window.cv){
+      const wait=()=>{if(window.cv&&cv.Mat){_cvLoaded=true;resolve();}else setTimeout(wait,50);};
+      wait();return;
+    }
+    const tryLoad=(url,fallbackUrl)=>{
+      const s=document.createElement('script');s.async=true;
+      s.src=url;
+      s.onload=()=>{
+        const wait=()=>{if(window.cv&&cv.Mat){_cvLoaded=true;resolve();}else setTimeout(wait,50);};
+        wait();
+      };
+      s.onerror=()=>{
+        if(fallbackUrl){
+          console.warn('[OpenCV] 5.0 not available, trying 4.10...');
+          tryLoad(fallbackUrl,null);
+        } else {
+          reject(new Error('OpenCV load failed'));
+        }
+      };
+      document.head.appendChild(s);
+    };
+    tryLoad('https://docs.opencv.org/5.0.0/opencv.js',
+            'https://docs.opencv.org/4.10.0/opencv.js');
+  });
+}
+
+// ── Deskew helper: detect ledger ruled lines via Hough transform → rotate ──
+function tryDeskew(grayMat,w,h){
+  try{
+    const edges=new cv.Mat();
+    cv.Canny(grayMat,edges,50,150);
+    const lines=new cv.Mat();
+    cv.HoughLinesP(edges,lines,1,Math.PI/180,Math.round(w*0.25),Math.round(w*0.20),30);
+    const angles=[];
+    for(let i=0;i<lines.rows;i++){
+      const x1=lines.intAt(i,0),y1=lines.intAt(i,1);
+      const x2=lines.intAt(i,2),y2=lines.intAt(i,3);
+      const ang=Math.atan2(y2-y1,x2-x1)*180/Math.PI;
+      if(Math.abs(ang)<12)angles.push(ang); // near-horizontal = ledger rows
+    }
+    edges.delete();lines.delete();
+    if(!angles.length)return null;
+    const avgAng=angles.reduce((a,b)=>a+b,0)/angles.length;
+    if(Math.abs(avgAng)<0.5)return null; // already straight
+    console.log('[OpenCV] Deskewing by',avgAng.toFixed(2)+'°');
+    const center=new cv.Point(w/2,h/2);
+    const M=cv.getRotationMatrix2D(center,avgAng,1.0);
+    const rotated=new cv.Mat();
+    cv.warpAffine(grayMat,rotated,M,new cv.Size(w,h),
+      cv.INTER_LINEAR,cv.BORDER_CONSTANT,new cv.Scalar(255,255,255,255));
+    M.delete();
+    return rotated;
+  }catch(e){console.warn('[OpenCV] Deskew failed:',e.message);return null;}
+}
+
+// ── Main OpenCV preprocessing pipeline ────────────────────────────────────
+// Grayscale → Denoise → Histogram Equalisation → Deskew
+// Falls back silently to raw dataUrl if OpenCV unavailable or fails.
+async function openCVPreprocess(dataUrl){
+  try{
+    await loadOpenCV();
+  }catch(e){
+    console.warn('[OpenCV] Not loaded:',e.message);
+    return dataUrl; // graceful fallback
+  }
+  return new Promise(resolve=>{
+    const img=new Image();
+    img.onload=()=>{
+      try{
+        // Draw original to temp canvas so cv.imread can read it
+        const tmp=document.createElement('canvas');
+        tmp.width=img.naturalWidth||img.width;
+        tmp.height=img.naturalHeight||img.height;
+        tmp.getContext('2d').drawImage(img,0,0);
+
+        const src=cv.imread(tmp);
+        const gray=new cv.Mat();
+        const blurred=new cv.Mat();
+        const equalized=new cv.Mat();
+
+        // Step 1: Grayscale (proper luminance weights via OpenCV)
+        cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY);
+
+        // Step 2: Light Gaussian blur — kills paper grain without hurting handwriting
+        cv.GaussianBlur(gray,blurred,new cv.Size(3,3),0);
+
+        // Step 3: Histogram equalisation — corrects uneven lighting across the page
+        // (one corner dark, another bright — common with phone photography)
+        cv.equalizeHist(blurred,equalized);
+
+        // Step 4: Deskew — detect and correct photo angle using ledger ruled lines
+        const deskewed=tryDeskew(equalized,tmp.width,tmp.height);
+        const final=deskewed||equalized;
+
+        const out=document.createElement('canvas');
+        cv.imshow(out,final);
+
+        // Cleanup all Mats
+        [src,gray,blurred,equalized,deskewed].forEach(m=>{
+          if(m)try{m.delete();}catch(e){}
+        });
+
+        console.log('[OpenCV] Preprocessing done —',tmp.width+'×'+tmp.height,'→ deskew:'+(deskewed?'yes':'no'));
+        resolve(out.toDataURL('image/jpeg',0.97));
+      }catch(e){
+        console.warn('[OpenCV] Preprocessing error:',e.message);
+        resolve(dataUrl); // graceful fallback
+      }
+    };
+    img.onerror=()=>resolve(dataUrl);
+    img.src=dataUrl;
+  });
+}
+
 async function compressLedger(dataUrl){
+  // ── Step 0: OpenCV 5.0 preprocessing (deskew + denoise + equalise) ───────
+  // Runs before cropping. Falls back silently if OpenCV unavailable.
+  let preprocessed = dataUrl;
+  try{ preprocessed = await openCVPreprocess(dataUrl); }
+  catch(e){ console.warn('[compressLedger] OpenCV skip:',e.message); }
+
   return new Promise((resolve,reject)=>{
     const img=new Image();
     img.onload=()=>{
@@ -758,7 +885,7 @@ async function compressLedger(dataUrl){
       cx.putImageData(id,0,0);
       resolve(cv.toDataURL('image/jpeg',0.95));
     };
-    img.onerror=reject;img.src=dataUrl;
+    img.onerror=reject;img.src=preprocessed;
   });
 }
 
@@ -776,7 +903,7 @@ async function compressImage(dataUrl,maxW){
       cx.drawImage(img,0,0,w,h);
       resolve(cv.toDataURL('image/jpeg',0.85));
     };
-    img.onerror=reject;img.src=dataUrl;
+    img.onerror=reject;img.src=preprocessed;
   });
 }
 

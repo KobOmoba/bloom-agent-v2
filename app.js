@@ -936,7 +936,7 @@ async function compressImage(dataUrl,maxW){
       cx.drawImage(img,0,0,w,h);
       resolve(cv.toDataURL('image/jpeg',0.85));
     };
-    img.onerror=reject;img.src=preprocessed;
+    img.onerror=reject;img.src=dataUrl;
   });
 }
 

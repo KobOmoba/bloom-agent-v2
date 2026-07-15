@@ -13,7 +13,7 @@ let _dsKey='';  // DeepSeek-OCR key (optional)
 let selDetectedClass='';  // class detected from ledger header
 let timerSec=0,timerInterval=null;
 let ledgerPageCount=1,ledgerImages={};
-let allStudents=[],classGroups={},selTier=null;
+let allStudents=[],classGroups={},selTier=null,selDetectedTerm='',selDetectedYear='';
 
 // ── Tiers ──────────────────────────────────────────────────────────────────
 const TIERS=[
@@ -410,22 +410,28 @@ async function processAllLedgers(){
     // This image is the LEFT HALF of a Nigerian school fees ledger.',
     // Cropped to show ONLY: Serial No | Surname | Firstname | Balance B/F | Current Fees | Total',
     // Payment installment columns have been removed from the image — do not look for them.',
-    'You are reading the LEFT SECTION of a Nigerian school fees ledger (handwritten).',
-    'The image shows these columns left-to-right:',
+    'You are reading a Nigerian SCHOOL FEES LEDGER (handwritten). This is a full-page photo.',
+    'The key columns are (left side of the page):',
     '  Col 1: SERIAL NO (1, 2, 3...)',
-    '  Col 2: SURNAME (family name)',
-    '  Col 3: FIRSTNAME (given name)',
+    '  Col 2: SURNAME (family name — all caps)',
+    '  Col 3: FIRSTNAME (given name — all caps)',
     '  Col 4: BALANCE FROM LAST TERM (debt carried forward — 0 or blank means none)',
     '  Col 5: CURRENT TERM FEES (the fee charged this term, e.g. 24000, 26000, 28000)',
     '  Col 6: TOTAL (col4 + col5 = everything this student owes)',
+    'The right side has payment installment columns — extract them too if visible:',
+    '  1ST PART PAYMENT, 2ND PART PAYMENT, 3RD PART PAYMENT amounts.',
+    '  paid = sum of all part payments made so far.',
     '',
     'YOUR TASK: For every numbered student row return:',
     '  name        = SURNAME + space + FIRSTNAME',
     '  balance_bf  = col 4 value (integer, 0 if blank or dash)',
     '  termFees    = col 5 value (integer)',
     '  total       = col 6 value (integer)',
-    '  fully_paid  = true if the word FULLY or FULLY PAID or F/PAID appears anywhere on that row',
-    '  detected_class = class label written at the top of the page (e.g. K-G, BASIC FOUR, NURSERY 1)',
+    '  paid        = sum of all part payment amounts visible on this row (integer, 0 if none)',
+    '  fully_paid  = true if the word FULLY or FULLY PAID or F/PAID appears on that row, OR if paid >= total',
+    '  detected_class = class label at the top of the page (e.g. K-G, BASIC FOUR, NURSERY 1, BASIC THREE)',
+    '  year        = year written at top of ledger (e.g. 2026)',
+    '  term        = term number at top of ledger (e.g. 3)',
     '',
     'Nigerian SURNAMES (common): OGUNDETI, OYERINDE, OLATUNDE, OBASA, OKENDINMI, ILELABOYE,',
     'AFOLABI, OLIYIDE, KOLANDLE, ADEGUNLE, ADEOYE, SABIU, OGUNLADE, ALIMI, JOHN, AKINOLA,',
@@ -446,14 +452,14 @@ async function processAllLedgers(){
     '4. Return ONLY valid JSON — no markdown fences, no explanation text.',
     '',
     'EXAMPLE OUTPUT:',
-    '{"detected_class":"K-G","students":[',
-    '{"name":"OLIYIDE GODWIN","balance_bf":0,"termFees":24000,"total":24000,"fully_paid":true},',
-    '{"name":"KASALI RASAQ","balance_bf":5000,"termFees":24000,"total":29000,"fully_paid":false},',
-    '{"name":"JOHN DEBORAH","balance_bf":3000,"termFees":26000,"total":29000,"fully_paid":false}',
+    '{"detected_class":"K-G","year":"2026","term":"3","students":[',
+    '{"name":"OLIYIDE GODWIN","balance_bf":0,"termFees":24000,"total":24000,"paid":24000,"fully_paid":true},',
+    '{"name":"KASALI RASAQ","balance_bf":5000,"termFees":24000,"total":29000,"paid":14000,"fully_paid":false},',
+    '{"name":"JOHN DEBORAH","balance_bf":3000,"termFees":26000,"total":29000,"paid":26000,"fully_paid":false}',
     ']}'
   ].join('\n');
 
-  allStudents=[];classGroups={};selDetectedClass='';
+  allStudents=[];classGroups={};selDetectedClass='';selDetectedTerm='';selDetectedYear='';
 
   // Build cascade in priority order — skip providers with no key
   function buildCascade(imgUrl){
@@ -503,6 +509,8 @@ async function processAllLedgers(){
         if(result.students.length>0){
           pageStudents=result.students;
           pageClass=result.detected_class;
+          if(result.term)selDetectedTerm=String(result.term).trim();
+          if(result.year)selDetectedYear=String(result.year).trim();
           diagEntry.ok=true;
           diagLog.push(diagEntry);
           console.log('[v2 Ledger] '+provider.name+' page '+pageNum+': '+pageStudents.length+' students');
@@ -550,6 +558,10 @@ async function processAllLedgers(){
       const dc=String(pageClass).trim().toUpperCase();
       if(dc&&dc!=='NULL'&&dc!=='UNKNOWN')selDetectedClass=dc;
     }
+    // Extract term and year from OCR result
+    const rawResult=parseLedgerJSON._lastResult||{};
+    if(rawResult.term&&String(rawResult.term).trim())selDetectedTerm=String(rawResult.term).trim();
+    if(rawResult.year&&String(rawResult.year).trim())selDetectedYear=String(rawResult.year).trim();
 
     // Deduplicate and merge into allStudents
     const seenNames=new Set(allStudents.map(s=>s.name.toLowerCase().replace(/[^a-z]/g,'')));
@@ -565,12 +577,15 @@ async function processAllLedgers(){
       s.balance  = s.balance_bf||s.balance||0;
       s.total    = s.total||(s.termFees+s.balance);
       if(s.fully_paid){
-        s.paid   = s.total;
+        s.paid   = s.paid||s.total;
         s.status = 'FULLY PAID';
       } else {
         s.paid   = s.paid||0;
-        s.status = s.paid>0?'PART PAID':'OWING';
+        s.status = s.paid>=s.total&&s.total>0?'FULLY PAID':s.paid>0?'PART PAID':'OWING';
       }
+      // Attach term/year detected from this page if available
+      if(!s.term&&selDetectedTerm)s.term=selDetectedTerm;
+      if(!s.year&&selDetectedYear)s.year=selDetectedYear;
       s.class=s.class||selDetectedClass||'UNKNOWN';
       s.confidence=calcConf(s);
       allStudents.push(s);
@@ -925,14 +940,15 @@ async function compressLedger(dataUrl){
       // Payment installment columns (7-14) that confuse OCR are RIGHT half.
       // By cropping left 50% THEN scaling to 800px, each critical column
       // is ~2x larger in the final image → Groq reads it cleanly every time.
-      const cropW=Math.round(origW*0.50);
-      const scale=Math.min(1,800/cropW);
-      const outW=Math.round(cropW*scale);
+      // Full page — do NOT crop. The name columns can extend beyond 50%.
+      // Scale to max 1024px wide so file stays manageable for vision APIs.
+      const scale=Math.min(1,1024/origW);
+      const outW=Math.round(origW*scale);
       const outH=Math.round(origH*scale);
       const cv=document.createElement('canvas');cv.width=outW;cv.height=outH;
       const cx=cv.getContext('2d');
-      // Draw only the left half of the original image
-      cx.drawImage(img,0,0,cropW,origH,0,0,outW,outH);
+      // Draw the full page
+      cx.drawImage(img,0,0,origW,origH,0,0,outW,outH);
       // Contrast enhancement — darken text, brighten paper
       const id=cx.getImageData(0,0,outW,outH);const d=id.data;
       let minV=255,maxV=0;
@@ -1024,10 +1040,14 @@ function parseLedgerJSON(text){
     const m=text.match(/\{[\s\S]*\}/);
     try{parsed=m?JSON.parse(m[0]):{};}catch(e2){parsed={};}
   }
-  return{
+  const result={
     detected_class:parsed.detected_class||'',
+    term:parsed.term||'',
+    year:parsed.year||'',
     students:Array.isArray(parsed.students)?parsed.students:[]
   };
+  parseLedgerJSON._lastResult=result;
+  return result;
 }
 
 // ── Mistral Pixtral Vision ────────────────────────────────────────────────
@@ -1105,24 +1125,33 @@ async function callHFVision(imageDataUrl,prompt,apiKey){
 async function callGroqVision(imageDataUrl,prompt,apiKey){
   const base64=imageDataUrl.split(',')[1];
   const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
-  const resp=await fetch('https://api.groq.com/openai/v1/chat/completions',{
-    method:'POST',
-    headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
-    body:JSON.stringify({
-      model:'qwen/qwen3.6-27b',
-      max_tokens:3000,temperature:0.2,
-      reasoning_format:'hidden',
-      messages:[{role:'user',content:[
-        {type:'image_url',image_url:{url:'data:'+mimeType+';base64,'+base64}},
-        {type:'text',text:prompt}
-      ]}]
-    })
-  });
-  if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.error?.message||'Groq '+resp.status);}
-  const data=await resp.json();
-  let text=data.choices?.[0]?.message?.content||'';
-  text=text.replace(/<think>[\s\S]*?<\/think>/g,'').trim();
-  return text;
+  // Use Groq's vision-capable models in order of preference
+  const visionModels=['meta-llama/llama-4-maverick-17b-128e-instruct','meta-llama/llama-4-scout-17b-16e-instruct','llama-3.2-90b-vision-preview'];
+  let lastErr='';
+  for(const model of visionModels){
+    try{
+      const resp=await fetch('https://api.groq.com/openai/v1/chat/completions',{
+        method:'POST',
+        headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
+        body:JSON.stringify({
+          model,
+          max_tokens:3000,temperature:0.1,
+          messages:[{role:'user',content:[
+            {type:'image_url',image_url:{url:'data:'+mimeType+';base64,'+base64}},
+            {type:'text',text:prompt}
+          ]}]
+        })
+      });
+      if(resp.status===400){const e=await resp.json().catch(()=>({}));lastErr=e.error?.message||'400';console.warn('[Groq vision] '+model+' failed:',lastErr);continue;}
+      if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'Groq '+resp.status);}
+      const data=await resp.json();
+      let text=data.choices?.[0]?.message?.content||'';
+      // Strip ildo reasoning tags if model injects them
+      text=text.replace(/<ildo>[\s\S]*?<\/ildo>/gi,'').replace(/<think>[\s\S]*?<\/think>/gi,'').trim();
+      return text;
+    }catch(e){lastErr=e.message;console.warn('[Groq vision] '+model+' error:',e.message);}
+  }
+  throw new Error('All Groq vision models failed: '+lastErr);
 }
 
 function fileToDataUrl(file){

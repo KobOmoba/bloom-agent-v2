@@ -238,28 +238,56 @@ async function processSignboard(file,dataUrl){
   status.textContent='Compressing image...';prog.style.width='10%';
   try{
     const keys=await _getApiKeys();
-    if(!keys.groq)throw new Error('No Groq API key — add it in portal Settings');
     const compressed=await compressImage(dataUrl,800);
-    prog.style.width='30%';status.textContent='AI reading signboard...';
-    const prompt='You are reading a Nigerian school signboard. Extract school name, full address, LGA, state.\nReturn JSON ONLY:\n{"name":"SCHOOL NAME","address":"full address","lga":"LGA","state":"State"}\nEmpty string if unclear.';
-    const result=await callGroqVision(compressed,prompt,keys.groq);
-    prog.style.width='80%';
+    prog.style.width='25%';
+
+    const prompt='You are reading a Nigerian school signboard photograph. Extract: school name, full address, LGA, state.\nReturn ONLY valid JSON — no markdown, no explanation:\n{"name":"SCHOOL NAME","address":"full address","lga":"LGA name","state":"State name"}\nUse empty string for anything unclear.';
+
+    // ── Cascade: try all 4 providers until one returns a school name ────────
+    const cascade=[];
+    if(keys.groq)    cascade.push({n:'Groq',     fn:()=>callGroqVision(compressed,prompt,keys.groq)});
+    if(keys.mistral) cascade.push({n:'Mistral',   fn:()=>callMistralVision(compressed,prompt,keys.mistral)});
+    if(keys.together)cascade.push({n:'Together',  fn:()=>callTogetherVision(compressed,prompt,keys.together)});
+    cascade.push(    {n:'HuggingFace',            fn:()=>callHFVision(compressed,prompt,keys.hf||'')});
+
+    if(!cascade.length){throw new Error('No API keys found in Firestore admin_settings/main (groqApiKey)');}
+
     let parsed={};
-    try{parsed=JSON.parse(result.replace(/```json|```/g,'').trim());}
-    catch(e){const m=result.match(/\{[^}]+\}/);if(m)try{parsed=JSON.parse(m[0]);}catch(e2){}}
+    for(const p of cascade){
+      status.textContent='Reading signboard via '+p.n+'...';
+      prog.style.width='50%';
+      try{
+        const raw=await p.fn();
+        const clean=raw.replace(/<think>[\s\S]*?<\/think>/gi,'').replace(/```json|```/g,'').trim();
+        let tmp={};
+        try{tmp=JSON.parse(clean);}
+        catch(e){const m=clean.match(/\{[\s\S]*?\}/);if(m)try{tmp=JSON.parse(m[0]);}catch(e2){}}
+        if(tmp.name&&tmp.name.length>2){parsed=tmp;console.log('[Signboard] '+p.n+' succeeded');break;}
+        console.warn('[Signboard] '+p.n+' returned no name, trying next...');
+      }catch(e){
+        console.warn('[Signboard] '+p.n+' failed:',e.message);
+      }
+    }
+
     if(parsed.name)$('f-school-name').value=parsed.name;
     if(parsed.address)$('f-address').value=parsed.address;
     if(parsed.state)$('f-state').value=parsed.state;
     if(parsed.lga)$('f-lga').value=parsed.lga;
     const filled=[parsed.name,parsed.address,parsed.state,parsed.lga].filter(Boolean).length;
     const hint=$('ai-hint-sign');
-    if(hint){hint.textContent='✨ AI filled '+filled+' of 4 fields from signboard';hint.style.display='block';}
-    prog.style.width='100%';status.textContent='Done!';
+    if(hint){
+      hint.textContent=filled>0?'✨ AI filled '+filled+' of 4 fields from signboard':'⚠️ AI could not read signboard — fill manually';
+      hint.style.display='block';
+    }
+    prog.style.width='100%';status.textContent=filled>0?'Done!':'Fill fields manually below.';
     setTimeout(()=>{$('sign-proc').style.display='none';$('school-fields').style.display='block';$('terms-card').style.display='block';$('btn-step1-next').style.display='block';},500);
   }catch(e){
-    status.textContent='⚠️ '+(e.message||'Error')+' — fill manually below';
-    prog.style.width='100%';
-    setTimeout(()=>{$('sign-proc').style.display='none';$('school-fields').style.display='block';$('terms-card').style.display='block';$('btn-step1-next').style.display='block';},1500);
+    console.error('[Signboard] Fatal:',e.message);
+    alert('Signboard error: '+e.message);
+    const prog=$('sign-prog'),status=$('sign-status');
+    if(status)status.textContent='⚠️ '+e.message+' — fill manually';
+    if(prog)prog.style.width='100%';
+    setTimeout(()=>{$('sign-proc').style.display='none';$('school-fields').style.display='block';$('terms-card').style.display='block';$('btn-step1-next').style.display='block';},500);
   }
 }
 

@@ -490,27 +490,59 @@ async function processAllLedgers(){
     let pageStudents=[];
     let pageClass='';
     let succeeded=false;
+    const diagLog=[];   // diagnostic log — shown in UI on failure
 
     for(const provider of cascade){
-      status.textContent='Page '+pageNum+'/'+images.length+' → trying '+provider.name+'...';
+      status.textContent='Page '+pageNum+'/'+images.length+' → '+provider.name+'...';
+      const diagEntry={provider:provider.name,students:0,error:'',raw:''};
       try{
         const rawText=await provider.fn();
+        diagEntry.raw=rawText?rawText.slice(0,300):'(empty response)';
         const result=parseLedgerJSON(rawText);
+        diagEntry.students=result.students.length;
         if(result.students.length>0){
           pageStudents=result.students;
           pageClass=result.detected_class;
+          diagEntry.ok=true;
+          diagLog.push(diagEntry);
           console.log('[v2 Ledger] '+provider.name+' page '+pageNum+': '+pageStudents.length+' students');
           succeeded=true;
           break;
         }
-        console.warn('[v2 Ledger] '+provider.name+' page '+pageNum+': 0 students — trying next');
+        diagEntry.error='0 students extracted from response';
+        console.warn('[v2 Ledger] '+provider.name+': 0 students — trying next');
       }catch(e){
-        console.warn('[v2 Ledger] '+provider.name+' page '+pageNum+' error:',e.message);
+        diagEntry.error=e.message||'Unknown error';
+        console.warn('[v2 Ledger] '+provider.name+' error:',e.message);
       }
+      diagLog.push(diagEntry);
     }
 
     if(!succeeded){
       status.textContent='Page '+pageNum+': all providers returned 0 students';
+      // ── Show diagnostic screen ─────────────────────────────────────────
+      const dbg=$('ocr-debug');
+      if(dbg){
+        dbg.style.display='block';
+        const rows=diagLog.map(d=>{
+          const icon=d.ok?'✅':d.students===0&&!d.error?'⚠️':'❌';
+          const rowColor=d.ok?'#10b981':d.error?'#ef4444':'#f59e0b';
+          return'<div style="border:1px solid '+rowColor+';border-radius:8px;padding:8px 10px;margin-bottom:6px;">'+
+            '<div style="font-weight:700;font-size:.8rem;color:'+rowColor+';">'+icon+' '+d.provider+'</div>'+
+            (d.error?'<div style="font-size:.73rem;color:#fca5a5;margin-top:2px;">Error: '+d.error+'</div>':'')+
+            (d.students?'<div style="font-size:.73rem;color:#6ee7b7;">Students found: '+d.students+'</div>':'')+
+            (d.raw&&!d.ok?'<div style="font-size:.68rem;color:var(--sub);margin-top:3px;word-break:break-all;max-height:60px;overflow:hidden;">Raw: '+d.raw+'</div>':'')+
+            '</div>';
+        }).join('');
+        dbg.innerHTML=
+          '<div style="font-weight:700;font-size:.85rem;color:var(--warn);margin-bottom:.5rem;">🔍 Ledger Scan Diagnostic — Page '+pageNum+'</div>'+
+          '<div style="font-size:.75rem;color:var(--sub);margin-bottom:.5rem;">Image size after processing: '+compressed.length+' chars (base64)</div>'+
+          rows+
+          '<div style="font-size:.72rem;color:var(--sub);margin-top:.5rem;">'+
+          'If all providers show errors: check groqApiKey in Firestore admin_settings → main<br>'+
+          'If providers return text but 0 students: photo may need better lighting/angle'+
+          '</div>';
+      }
       await new Promise(r=>setTimeout(r,1500));
     }
 

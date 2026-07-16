@@ -1075,28 +1075,60 @@ async function callMistralVision(imageDataUrl,prompt,apiKey){
   return text;
 }
 
-// ── Together AI — Llama 3.2 Vision ────────────────────────────────────────
+// ── Together AI — Llama Vision Free ─────────────────────────────────────
+// Together AI requires a public HTTPS URL (not base64). We upload to Firebase
+// Storage temporarily, call Together, then delete the file.
+async function uploadToStorageTemp(base64,mimeType){
+  const storage=firebase.storage();
+  const fname='ocr_tmp/'+Date.now()+'_'+Math.random().toString(36).slice(2)+'.jpg';
+  const ref=storage.ref(fname);
+  // Convert base64 to Blob
+  const byteStr=atob(base64);
+  const arr=new Uint8Array(byteStr.length);
+  for(let i=0;i<byteStr.length;i++)arr[i]=byteStr.charCodeAt(i);
+  const blob=new Blob([arr],{type:mimeType});
+  await ref.put(blob,{contentType:mimeType});
+  const url=await ref.getDownloadURL();
+  return{url,ref};
+}
+
 async function callTogetherVision(imageDataUrl,prompt,apiKey){
   if(!apiKey)throw new Error('No Together key');
   const base64=imageDataUrl.split(',')[1];
   const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
-  const resp=await fetch('https://api.together.xyz/v1/chat/completions',{
-    method:'POST',
-    headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
-    body:JSON.stringify({
-      model:'meta-llama/Llama-Vision-Free',
-      max_tokens:3000,temperature:0.1,
-      messages:[{role:'user',content:[
-        {type:'image_url',image_url:{url:'data:'+mimeType+';base64,'+base64}},
-        {type:'text',text:prompt}
-      ]}]
-    })
-  });
-  if(!resp.ok){const err=await resp.json().catch(()=>({}));const msg=err.error?.message||JSON.stringify(err)||'Together '+resp.status;console.error('[Together] HTTP '+resp.status+':',msg);throw new Error(msg);}
-  const data=await resp.json();
-  const text=(data.choices?.[0]?.message?.content||'').trim();
-  console.log('[Together] Raw response ('+text.length+' chars):',text.slice(0,300));
-  return text;
+
+  // Upload to Firebase Storage to get a public URL
+  let tempRef=null;
+  let publicUrl=null;
+  try{
+    const {url,ref}=await uploadToStorageTemp(base64,mimeType);
+    publicUrl=url;tempRef=ref;
+  }catch(e){
+    throw new Error('Storage upload failed: '+e.message);
+  }
+
+  try{
+    const resp=await fetch('https://api.together.xyz/v1/chat/completions',{
+      method:'POST',
+      headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'meta-llama/Llama-Vision-Free',
+        max_tokens:3000,temperature:0.1,
+        messages:[{role:'user',content:[
+          {type:'image_url',image_url:{url:publicUrl}},
+          {type:'text',text:prompt}
+        ]}]
+      })
+    });
+    if(!resp.ok){const err=await resp.json().catch(()=>({}));const msg=err.error?.message||JSON.stringify(err)||'Together '+resp.status;console.error('[Together] HTTP '+resp.status+':',msg);throw new Error(msg);}
+    const data=await resp.json();
+    const text=(data.choices?.[0]?.message?.content||'').trim();
+    console.log('[Together] Raw response ('+text.length+' chars):',text.slice(0,300));
+    return text;
+  }finally{
+    // Clean up temp file
+    if(tempRef)tempRef.delete().catch(()=>{});
+  }
 }
 
 // ── HuggingFace — Qwen2.5-VL-7B-Instruct ────────────────────────────────

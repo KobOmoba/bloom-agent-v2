@@ -539,17 +539,18 @@ async function processAllLedgers(){
             '<div style="font-weight:700;font-size:.8rem;color:'+rowColor+';">'+icon+' '+d.provider+'</div>'+
             (d.error?'<div style="font-size:.73rem;color:#fca5a5;margin-top:2px;">Error: '+d.error+'</div>':'')+
             (d.students?'<div style="font-size:.73rem;color:#6ee7b7;">Students found: '+d.students+'</div>':'')+
-            (d.raw&&!d.ok?'<div style="font-size:.68rem;color:var(--sub);margin-top:3px;word-break:break-all;max-height:60px;overflow:hidden;">Raw: '+d.raw+'</div>':'')+
+            (d.raw&&!d.ok?'<div style="font-size:.68rem;color:var(--sub);margin-top:3px;word-break:break-all;background:rgba(0,0,0,.3);border-radius:6px;padding:6px;">📄 Raw response:<br>'+d.raw.slice(0,500)+(d.raw.length>500?'…':'')+'</div>':'')+
             '</div>';
         }).join('');
+        const sizeKB=Math.round(compressed.length*0.75/1024);
         dbg.innerHTML=
           '<div style="font-weight:700;font-size:.85rem;color:var(--warn);margin-bottom:.5rem;">🔍 Ledger Scan Diagnostic — Page '+pageNum+'</div>'+
-          '<div style="font-size:.75rem;color:var(--sub);margin-bottom:.5rem;">Image size after processing: '+compressed.length+' chars (base64)</div>'+
+          '<div style="font-size:.75rem;color:var(--sub);margin-bottom:.5rem;">Image: '+sizeKB+'KB after processing</div>'+
           rows+
           '<div style="font-size:.72rem;color:var(--sub);margin-top:.5rem;">'+
-          'If all providers show errors: check groqApiKey in Firestore admin_settings → main<br>'+
-          'If providers return text but 0 students: photo may need better lighting/angle'+
-          '</div>';
+          'Screenshot this screen and send to Koda for debugging.'+
+          '</div>'+
+          '<button onclick="retryLedger()" style="background:var(--brand);color:#fff;border:none;border-radius:8px;padding:.5rem 1rem;font-size:.8rem;font-weight:700;margin-top:.5rem;width:100%;cursor:pointer;">📸 Retake & Retry</button>';
       }
       await new Promise(r=>setTimeout(r,1500));
     }

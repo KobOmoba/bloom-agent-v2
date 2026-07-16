@@ -243,12 +243,12 @@ async function processSignboard(file,dataUrl){
 
     const prompt='You are reading a Nigerian school signboard photograph. Extract: school name, full address, LGA, state.\nReturn ONLY valid JSON — no markdown, no explanation:\n{"name":"SCHOOL NAME","address":"full address","lga":"LGA name","state":"State name"}\nUse empty string for anything unclear.';
 
-    // ── Cascade: try all 4 providers until one returns a school name ────────
+    // ── Cascade: Together AI first (free + reliable), then fallbacks ────────
     const cascade=[];
-    if(keys.groq)    cascade.push({n:'Groq',     fn:()=>callGroqVision(compressed,prompt,keys.groq)});
-    if(keys.mistral) cascade.push({n:'Mistral',   fn:()=>callMistralVision(compressed,prompt,keys.mistral)});
-    if(keys.together)cascade.push({n:'Together',  fn:()=>callTogetherVision(compressed,prompt,keys.together)});
-    cascade.push(    {n:'HuggingFace',            fn:()=>callHFVision(compressed,prompt,keys.hf||'')});
+    if(keys.together)cascade.push({n:'Together AI', fn:()=>callTogetherVision(compressed,prompt,keys.together)});
+    if(keys.groq)    cascade.push({n:'Groq',        fn:()=>callGroqVision(compressed,prompt,keys.groq)});
+    if(keys.mistral) cascade.push({n:'Mistral',      fn:()=>callMistralVision(compressed,prompt,keys.mistral)});
+    cascade.push(    {n:'HuggingFace',              fn:()=>callHFVision(compressed,prompt,keys.hf||'')});
 
     if(!cascade.length){throw new Error('No API keys found in Firestore admin_settings/main (groqApiKey)');}
 
@@ -461,12 +461,12 @@ async function processAllLedgers(){
 
   allStudents=[];classGroups={};selDetectedClass='';selDetectedTerm='';selDetectedYear='';
 
-  // Build cascade in priority order — skip providers with no key
+  // Build cascade in priority order — Together AI first (free + reliable vision)
   function buildCascade(imgUrl){
     const cascade=[];
-    if(keys.groq)    cascade.push({name:'Groq',        fn:()=>callGroqVision(imgUrl,LEDGER_PROMPT,keys.groq)});
-    if(keys.mistral) cascade.push({name:'Mistral',      fn:()=>callMistralVision(imgUrl,LEDGER_PROMPT,keys.mistral)});
     if(keys.together)cascade.push({name:'Together AI',  fn:()=>callTogetherVision(imgUrl,LEDGER_PROMPT,keys.together)});
+    if(keys.groq)    cascade.push({name:'Groq',          fn:()=>callGroqVision(imgUrl,LEDGER_PROMPT,keys.groq)});
+    if(keys.mistral) cascade.push({name:'Mistral',        fn:()=>callMistralVision(imgUrl,LEDGER_PROMPT,keys.mistral)});
     // HF is always last — works without a key (rate-limited but functional)
     cascade.push({name:'HuggingFace', fn:()=>callHFVision(imgUrl,LEDGER_PROMPT,keys.hf||'')});
     return cascade;
@@ -1081,7 +1081,7 @@ async function callTogetherVision(imageDataUrl,prompt,apiKey){
     method:'POST',
     headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
     body:JSON.stringify({
-      model:'meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo',
+      model:'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo',
       max_tokens:3000,temperature:0.1,
       messages:[{role:'user',content:[
         {type:'image_url',image_url:{url:'data:'+mimeType+';base64,'+base64}},

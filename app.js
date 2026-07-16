@@ -243,10 +243,10 @@ async function processSignboard(file,dataUrl){
 
     const prompt='You are reading a Nigerian school signboard photograph. Extract: school name, full address, LGA, state.\nReturn ONLY valid JSON — no markdown, no explanation:\n{"name":"SCHOOL NAME","address":"full address","lga":"LGA name","state":"State name"}\nUse empty string for anything unclear.';
 
-    // ── Cascade: Together AI first (free + reliable), then fallbacks ────────
+    // ── Cascade: Groq first (best for signboards), Together fallback ────────
     const cascade=[];
-    if(keys.together)cascade.push({n:'Together AI', fn:()=>callTogetherVision(compressed,prompt,keys.together)});
     if(keys.groq)    cascade.push({n:'Groq',        fn:()=>callGroqVision(compressed,prompt,keys.groq)});
+    if(keys.together)cascade.push({n:'Together AI', fn:()=>callTogetherVision(compressed,prompt,keys.together)});
     if(keys.mistral) cascade.push({n:'Mistral',      fn:()=>callMistralVision(compressed,prompt,keys.mistral)});
     cascade.push(    {n:'HuggingFace',              fn:()=>callHFVision(compressed,prompt,keys.hf||'')});
 

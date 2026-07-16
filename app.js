@@ -1069,7 +1069,9 @@ async function callMistralVision(imageDataUrl,prompt,apiKey){
   });
   if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.message||'Mistral '+resp.status);}
   const data=await resp.json();
-  return(data.choices?.[0]?.message?.content||'').trim();
+  const text=(data.choices?.[0]?.message?.content||'').trim();
+  console.log('[Mistral] Raw response ('+text.length+' chars):',text.slice(0,300));
+  return text;
 }
 
 // ── Together AI — Llama 3.2 Vision ────────────────────────────────────────
@@ -1081,7 +1083,7 @@ async function callTogetherVision(imageDataUrl,prompt,apiKey){
     method:'POST',
     headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
     body:JSON.stringify({
-      model:'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo',
+      model:'meta-llama/Llama-Vision-Free',
       max_tokens:3000,temperature:0.1,
       messages:[{role:'user',content:[
         {type:'image_url',image_url:{url:'data:'+mimeType+';base64,'+base64}},
@@ -1089,9 +1091,11 @@ async function callTogetherVision(imageDataUrl,prompt,apiKey){
       ]}]
     })
   });
-  if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.error?.message||'Together '+resp.status);}
+  if(!resp.ok){const err=await resp.json().catch(()=>({}));const msg=err.error?.message||JSON.stringify(err)||'Together '+resp.status;console.error('[Together] HTTP '+resp.status+':',msg);throw new Error(msg);}
   const data=await resp.json();
-  return(data.choices?.[0]?.message?.content||'').trim();
+  const text=(data.choices?.[0]?.message?.content||'').trim();
+  console.log('[Together] Raw response ('+text.length+' chars):',text.slice(0,300));
+  return text;
 }
 
 // ── HuggingFace — Qwen2.5-VL-7B-Instruct ────────────────────────────────
@@ -1119,7 +1123,9 @@ async function callHFVision(imageDataUrl,prompt,apiKey){
   }
   if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.error?.message||'HF '+resp.status);}
   const data=await resp.json();
-  return(data.choices?.[0]?.message?.content||'').trim();
+  const text=(data.choices?.[0]?.message?.content||'').trim();
+  console.log('[HuggingFace] Raw response ('+text.length+' chars):',text.slice(0,300));
+  return text;
 }
 
 async function callGroqVision(imageDataUrl,prompt,apiKey){

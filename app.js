@@ -1129,41 +1129,29 @@ async function uploadToStorageTemp(base64,mimeType){
 
 async function callTogetherVision(imageDataUrl,prompt,apiKey){
   if(!apiKey)throw new Error('No Together key');
-  const base64=imageDataUrl.split(',')[1];
-  const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
-
-  // Upload to Firebase Storage to get a public URL
-  let tempRef=null;
-  let publicUrl=null;
-  try{
-    const {url,ref}=await uploadToStorageTemp(base64,mimeType);
-    publicUrl=url;tempRef=ref;
-  }catch(e){
-    throw new Error('Storage upload failed: '+e.message);
+  // Send base64 directly — no Firebase Storage upload needed (avoids mobile hang)
+  const resp=await fetch('https://api.together.xyz/v1/chat/completions',{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
+    body:JSON.stringify({
+      model:'meta-llama/Llama-Vision-Free',
+      max_tokens:3000,temperature:0.1,
+      messages:[{role:'user',content:[
+        {type:'image_url',image_url:{url:imageDataUrl}},
+        {type:'text',text:prompt}
+      ]}]
+    })
+  });
+  if(!resp.ok){
+    const err=await resp.json().catch(()=>({}));
+    const msg=err.error?.message||JSON.stringify(err)||'Together '+resp.status;
+    console.error('[Together] HTTP '+resp.status+':',msg);
+    throw new Error(msg);
   }
-
-  try{
-    const resp=await fetch('https://api.together.xyz/v1/chat/completions',{
-      method:'POST',
-      headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
-      body:JSON.stringify({
-        model:'meta-llama/Llama-Vision-Free',
-        max_tokens:3000,temperature:0.1,
-        messages:[{role:'user',content:[
-          {type:'image_url',image_url:{url:publicUrl}},
-          {type:'text',text:prompt}
-        ]}]
-      })
-    });
-    if(!resp.ok){const err=await resp.json().catch(()=>({}));const msg=err.error?.message||JSON.stringify(err)||'Together '+resp.status;console.error('[Together] HTTP '+resp.status+':',msg);throw new Error(msg);}
-    const data=await resp.json();
-    const text=(data.choices?.[0]?.message?.content||'').trim();
-    console.log('[Together] Raw response ('+text.length+' chars):',text.slice(0,300));
-    return text;
-  }finally{
-    // Clean up temp file
-    if(tempRef)tempRef.delete().catch(()=>{});
-  }
+  const data=await resp.json();
+  const text=(data.choices?.[0]?.message?.content||'').trim();
+  console.log('[Together] Raw response ('+text.length+' chars):',text.slice(0,300));
+  return text;
 }
 
 // ── HuggingFace — Qwen2.5-VL-7B-Instruct ────────────────────────────────

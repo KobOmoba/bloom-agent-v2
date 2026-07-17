@@ -159,7 +159,7 @@ function logout(){if(!confirm('Logout?'))return;localStorage.removeItem('ag2_age
 // ── API Keys ───────────────────────────────────────────────────────────────
 async function _getApiKeys(){
   if(apiKeys)return apiKeys;
-  let fsGroq='',fsMistral='',fsTogether='',fsHF='',fsAnthropic='';
+  let fsGroq='',fsMistral='',fsTogether='',fsHF='',fsOcrUrl='',fsAnthropic='';
   if(db){
     try{
       const doc=await db.collection('admin_settings').doc('main').get();
@@ -170,10 +170,14 @@ async function _getApiKeys(){
         fsMistral  = d.mistralApiKey ||'';
         fsTogether = d.togetherApiKey||'';
         fsHF       = d.hfApiKey      ||'';
+        // Oracle VPS PaddleOCR service — set this once the VPS is live.
+        // Value should be the base URL only, e.g. "http://123.45.67.89"
+        // (no trailing slash, no /scan-ledger — that's appended automatically)
+        fsOcrUrl   = d.ocrServiceUrl  ||'';
       }
     }catch(e){console.warn('Keys fetch:',e.message);}
   }
-  apiKeys={groq:fsGroq, mistral:fsMistral, together:fsTogether, hf:fsHF, anthropic:fsAnthropic};
+  apiKeys={groq:fsGroq, mistral:fsMistral, together:fsTogether, hf:fsHF, ocrServiceUrl:fsOcrUrl, anthropic:fsAnthropic};
   return apiKeys;
 }
 
@@ -392,7 +396,7 @@ async function processAllLedgers(){
 
   // ── Fetch all 4 provider keys once ─────────────────────────────────────
   const keys=await _getApiKeys();
-  const hasAnyKey=keys.groq||keys.mistral||keys.together||keys.hf;
+  const hasAnyKey=keys.groq||keys.mistral||keys.together||keys.hf||keys.ocrServiceUrl;
   if(!hasAnyKey){
     $('ledger-proc').style.display='none';
     const dbg=$('ocr-debug');
@@ -462,13 +466,17 @@ async function processAllLedgers(){
 
   allStudents=[];classGroups={};selDetectedClass='';selDetectedTerm='';selDetectedYear='';
 
-  // Build cascade — Claude first (best vision), then fallbacks
+  // Build cascade in priority order.
+  // PaddleOCR (Oracle VPS, self-hosted, coordinate-based column reading)
+  // is tried FIRST when configured — it's free forever and structurally
+  // more reliable than vision-LLM guessing. Everything else is fallback.
   function buildCascade(imgUrl){
     const cascade=[];
+    if(keys.ocrServiceUrl)cascade.push({name:'PaddleOCR (VPS)', fn:()=>callPaddleOCR(imgUrl,keys.ocrServiceUrl)});
     if(keys.anthropic)cascade.push({name:'Claude',       fn:()=>callClaudeVision(imgUrl,LEDGER_PROMPT,keys.anthropic)});
-    if(keys.together) cascade.push({name:'Together AI',  fn:()=>callTogetherVision(imgUrl,LEDGER_PROMPT,keys.together)});
-    if(keys.groq)     cascade.push({name:'Groq',         fn:()=>callGroqVision(imgUrl,LEDGER_PROMPT,keys.groq)});
-    if(keys.mistral)  cascade.push({name:'Mistral',      fn:()=>callMistralVision(imgUrl,LEDGER_PROMPT,keys.mistral)});
+    if(keys.together)cascade.push({name:'Together AI',  fn:()=>callTogetherVision(imgUrl,LEDGER_PROMPT,keys.together)});
+    if(keys.groq)    cascade.push({name:'Groq',          fn:()=>callGroqVision(imgUrl,LEDGER_PROMPT,keys.groq)});
+    if(keys.mistral) cascade.push({name:'Mistral',        fn:()=>callMistralVision(imgUrl,LEDGER_PROMPT,keys.mistral)});
     // HF is always last — works without a key (rate-limited but functional)
     cascade.push({name:'HuggingFace', fn:()=>callHFVision(imgUrl,LEDGER_PROMPT,keys.hf||'')});
     return cascade;
@@ -1195,6 +1203,39 @@ async function callHFVision(imageDataUrl,prompt,apiKey){
   const text=(data.choices?.[0]?.message?.content||'').trim();
   console.log('[HuggingFace] Raw response ('+text.length+' chars):',text.slice(0,300));
   return text;
+}
+
+// ── Oracle VPS — PaddleOCR (self-hosted, free forever) ────────────────────
+// Coordinate-based column reconstruction — this is the PRIMARY ledger
+// reader once ocrServiceUrl is configured in Firestore admin_settings.
+// Falls through silently to the vision-LLM cascade below if unset or if
+// the VPS is unreachable — safe to leave dormant until deployed.
+async function callPaddleOCR(imageDataUrl,serviceUrl){
+  if(!serviceUrl)throw new Error('No OCR service URL configured');
+  const base64=imageDataUrl.split(',')[1];
+  const resp=await fetch(serviceUrl.replace(/\/$/,'')+'/scan-ledger',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({image:base64})
+  });
+  if(!resp.ok){
+    const err=await resp.json().catch(()=>({}));
+    throw new Error(err.detail||'PaddleOCR service '+resp.status);
+  }
+  const data=await resp.json();
+  // Return in the same shape parseLedgerJSON produces, so the rest of the
+  // pipeline (dedup, merge, class detection) needs zero changes.
+  return JSON.stringify({
+    detected_class: data.detected_class||'',
+    students: (data.students||[]).map(s=>({
+      name: s.name,
+      balance_bf: s.balance_bf||0,
+      termFees: s.termFees||0,
+      total: s.total||0,
+      paid: s.fully_paid?(s.total||0):0,
+      fully_paid: !!s.fully_paid
+    }))
+  });
 }
 
 async function callGroqVision(imageDataUrl,prompt,apiKey){

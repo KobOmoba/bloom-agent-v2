@@ -473,9 +473,10 @@ async function processAllLedgers(){
   function buildCascade(imgUrl){
     const cascade=[];
     if(keys.ocrServiceUrl)cascade.push({name:'PaddleOCR (VPS)', fn:()=>callPaddleOCR(imgUrl,keys.ocrServiceUrl)});
-    if(keys.anthropic)cascade.push({name:'Claude',       fn:()=>callClaudeVision(imgUrl,LEDGER_PROMPT,keys.anthropic)});
-    if(keys.together)cascade.push({name:'Together AI',  fn:()=>callTogetherVision(imgUrl,LEDGER_PROMPT,keys.together)});
+    // Groq is PRIMARY — proven to work, 100% free, no credit card needed
     if(keys.groq)    cascade.push({name:'Groq',          fn:()=>callGroqVision(imgUrl,LEDGER_PROMPT,keys.groq)});
+    if(keys.together)cascade.push({name:'Together AI',  fn:()=>callTogetherVision(imgUrl,LEDGER_PROMPT,keys.together)});
+    if(keys.anthropic)cascade.push({name:'Claude',       fn:()=>callClaudeVision(imgUrl,LEDGER_PROMPT,keys.anthropic)});
     if(keys.mistral) cascade.push({name:'Mistral',        fn:()=>callMistralVision(imgUrl,LEDGER_PROMPT,keys.mistral)});
     // HF is always last — works without a key (rate-limited but functional)
     cascade.push({name:'HuggingFace', fn:()=>callHFVision(imgUrl,LEDGER_PROMPT,keys.hf||'')});

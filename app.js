@@ -159,20 +159,21 @@ function logout(){if(!confirm('Logout?'))return;localStorage.removeItem('ag2_age
 // ── API Keys ───────────────────────────────────────────────────────────────
 async function _getApiKeys(){
   if(apiKeys)return apiKeys;
-  let fsGroq='',fsMistral='',fsTogether='',fsHF='';
+  let fsGroq='',fsMistral='',fsTogether='',fsHF='',fsAnthropic='';
   if(db){
     try{
       const doc=await db.collection('admin_settings').doc('main').get();
       if(doc.exists){
         const d=doc.data();
         fsGroq     = d.groqApiKey    ||'';
+        fsAnthropic= d.anthropicApiKey||'';
         fsMistral  = d.mistralApiKey ||'';
         fsTogether = d.togetherApiKey||'';
         fsHF       = d.hfApiKey      ||'';
       }
     }catch(e){console.warn('Keys fetch:',e.message);}
   }
-  apiKeys={groq:fsGroq, mistral:fsMistral, together:fsTogether, hf:fsHF};
+  apiKeys={groq:fsGroq, mistral:fsMistral, together:fsTogether, hf:fsHF, anthropic:fsAnthropic};
   return apiKeys;
 }
 
@@ -461,12 +462,13 @@ async function processAllLedgers(){
 
   allStudents=[];classGroups={};selDetectedClass='';selDetectedTerm='';selDetectedYear='';
 
-  // Build cascade in priority order — Together AI first (free + reliable vision)
+  // Build cascade — Claude first (best vision), then fallbacks
   function buildCascade(imgUrl){
     const cascade=[];
-    if(keys.together)cascade.push({name:'Together AI',  fn:()=>callTogetherVision(imgUrl,LEDGER_PROMPT,keys.together)});
-    if(keys.groq)    cascade.push({name:'Groq',          fn:()=>callGroqVision(imgUrl,LEDGER_PROMPT,keys.groq)});
-    if(keys.mistral) cascade.push({name:'Mistral',        fn:()=>callMistralVision(imgUrl,LEDGER_PROMPT,keys.mistral)});
+    if(keys.anthropic)cascade.push({name:'Claude',       fn:()=>callClaudeVision(imgUrl,LEDGER_PROMPT,keys.anthropic)});
+    if(keys.together) cascade.push({name:'Together AI',  fn:()=>callTogetherVision(imgUrl,LEDGER_PROMPT,keys.together)});
+    if(keys.groq)     cascade.push({name:'Groq',         fn:()=>callGroqVision(imgUrl,LEDGER_PROMPT,keys.groq)});
+    if(keys.mistral)  cascade.push({name:'Mistral',      fn:()=>callMistralVision(imgUrl,LEDGER_PROMPT,keys.mistral)});
     // HF is always last — works without a key (rate-limited but functional)
     cascade.push({name:'HuggingFace', fn:()=>callHFVision(imgUrl,LEDGER_PROMPT,keys.hf||'')});
     return cascade;
@@ -1072,6 +1074,40 @@ async function callMistralVision(imageDataUrl,prompt,apiKey){
   const data=await resp.json();
   const text=(data.choices?.[0]?.message?.content||'').trim();
   console.log('[Mistral] Raw response ('+text.length+' chars):',text.slice(0,300));
+  return text;
+}
+
+// ── Claude (Anthropic) — Best for structured ledger extraction ────────────
+async function callClaudeVision(imageDataUrl,prompt,apiKey){
+  if(!apiKey)throw new Error('No Anthropic key');
+  const base64=imageDataUrl.split(',')[1];
+  const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
+  const resp=await fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',
+    headers:{
+      'x-api-key':apiKey,
+      'anthropic-version':'2023-06-01',
+      'content-type':'application/json',
+      'anthropic-dangerous-direct-browser-access':'true'
+    },
+    body:JSON.stringify({
+      model:'claude-haiku-4-5',
+      max_tokens:4096,
+      messages:[{role:'user',content:[
+        {type:'image',source:{type:'base64',media_type:mimeType,data:base64}},
+        {type:'text',text:prompt}
+      ]}]
+    })
+  });
+  if(!resp.ok){
+    const err=await resp.json().catch(()=>({}));
+    const msg=err.error?.message||'Claude '+resp.status;
+    console.error('[Claude] HTTP '+resp.status+':',msg);
+    throw new Error(msg);
+  }
+  const data=await resp.json();
+  const text=(data.content?.[0]?.text||'').trim();
+  console.log('[Claude] Raw response ('+text.length+' chars):',text.slice(0,300));
   return text;
 }
 

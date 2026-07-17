@@ -512,7 +512,11 @@ async function processAllLedgers(){
       status.textContent='Page '+pageNum+'/'+images.length+' → '+provider.name+'...';
       const diagEntry={provider:provider.name,students:0,error:'',raw:''};
       try{
-        const rawText=await provider.fn();
+        // 30-second timeout per provider — prevents hanging on slow/dead APIs
+        const rawText=await Promise.race([
+          provider.fn(),
+          new Promise((_,rej)=>setTimeout(()=>rej(new Error(provider.name+' timed out after 30s')),30000))
+        ]);
         diagEntry.raw=rawText?rawText.slice(0,300):'(empty response)';
         const result=parseLedgerJSON(rawText);
         diagEntry.students=result.students.length;
@@ -1085,36 +1089,23 @@ async function callMistralVision(imageDataUrl,prompt,apiKey){
   return text;
 }
 
-// ── Claude (Anthropic) — Best for structured ledger extraction ────────────
+// ── Claude (Anthropic) — Via Base44 proxy (avoids CORS) ──────────────────
+const CLAUDE_PROXY_URL='https://api.base44.com/api/apps/6a57168a8c411237376a1bf9/functions/claudeOcr';
 async function callClaudeVision(imageDataUrl,prompt,apiKey){
   if(!apiKey)throw new Error('No Anthropic key');
-  const base64=imageDataUrl.split(',')[1];
-  const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
-  const resp=await fetch('https://api.anthropic.com/v1/messages',{
+  const resp=await fetch(CLAUDE_PROXY_URL,{
     method:'POST',
-    headers:{
-      'x-api-key':apiKey,
-      'anthropic-version':'2023-06-01',
-      'content-type':'application/json',
-      'anthropic-dangerous-direct-browser-access':'true'
-    },
-    body:JSON.stringify({
-      model:'claude-haiku-4-5',
-      max_tokens:4096,
-      messages:[{role:'user',content:[
-        {type:'image',source:{type:'base64',media_type:mimeType,data:base64}},
-        {type:'text',text:prompt}
-      ]}]
-    })
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({imageDataUrl,prompt,apiKey})
   });
   if(!resp.ok){
     const err=await resp.json().catch(()=>({}));
-    const msg=err.error?.message||'Claude '+resp.status;
-    console.error('[Claude] HTTP '+resp.status+':',msg);
+    const msg=err.error||'Claude proxy '+resp.status;
+    console.error('[Claude] Proxy error '+resp.status+':',msg);
     throw new Error(msg);
   }
   const data=await resp.json();
-  const text=(data.content?.[0]?.text||'').trim();
+  const text=(data.text||'').trim();
   console.log('[Claude] Raw response ('+text.length+' chars):',text.slice(0,300));
   return text;
 }

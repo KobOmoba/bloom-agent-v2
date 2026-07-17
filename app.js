@@ -237,6 +237,12 @@ function markCaptured(id,url){
   el.appendChild(rb);
 }
 
+// ── Timeout wrapper — kills hanging API calls after N seconds ────────────
+function withTimeout(promise, ms, label){
+  const t = new Promise((_,reject)=>setTimeout(()=>reject(new Error(label+' timed out after '+Math.round(ms/1000)+'s')),ms));
+  return Promise.race([promise, t]);
+}
+
 async function processSignboard(file,dataUrl){
   $('sign-proc').style.display='block';
   const prog=$('sign-prog'),status=$('sign-status');
@@ -262,7 +268,7 @@ async function processSignboard(file,dataUrl){
       status.textContent='Reading signboard via '+p.n+'...';
       prog.style.width='50%';
       try{
-        const raw=await p.fn();
+        const raw=await withTimeout(p.fn(), 25000, p.n);
         const clean=raw.replace(/<think>[\s\S]*?<\/think>/gi,'').replace(/```json|```/g,'').trim();
         let tmp={};
         try{tmp=JSON.parse(clean);}
@@ -1131,8 +1137,10 @@ async function uploadToStorageTemp(base64,mimeType){
 async function callTogetherVision(imageDataUrl,prompt,apiKey){
   if(!apiKey)throw new Error('No Together key');
   // Send base64 directly — no Firebase Storage upload needed (avoids mobile hang)
+  const ctrl2=new AbortController();
+  const killTimer2=setTimeout(()=>ctrl2.abort(),22000);
   const resp=await fetch('https://api.together.xyz/v1/chat/completions',{
-    method:'POST',
+    method:'POST',signal:ctrl2.signal,
     headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
     body:JSON.stringify({
       model:'meta-llama/Llama-Vision-Free',
@@ -1143,6 +1151,7 @@ async function callTogetherVision(imageDataUrl,prompt,apiKey){
       ]}]
     })
   });
+  clearTimeout(killTimer2);
   if(!resp.ok){
     const err=await resp.json().catch(()=>({}));
     const msg=err.error?.message||JSON.stringify(err)||'Together '+resp.status;
@@ -1226,8 +1235,10 @@ async function callGroqVision(imageDataUrl,prompt,apiKey){
   let lastErr='';
   for(const model of visionModels){
     try{
+      const ctrl=new AbortController();
+      const killTimer=setTimeout(()=>ctrl.abort(),22000);
       const resp=await fetch('https://api.groq.com/openai/v1/chat/completions',{
-        method:'POST',
+        method:'POST',signal:ctrl.signal,
         headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
         body:JSON.stringify({
           model,
@@ -1238,6 +1249,7 @@ async function callGroqVision(imageDataUrl,prompt,apiKey){
           ]}]
         })
       });
+      clearTimeout(killTimer);
       if(resp.status===400){const e=await resp.json().catch(()=>({}));lastErr=e.error?.message||'400';console.warn('[Groq vision] '+model+' failed:',lastErr);continue;}
       if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'Groq '+resp.status);}
       const data=await resp.json();

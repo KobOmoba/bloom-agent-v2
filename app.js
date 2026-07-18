@@ -469,7 +469,7 @@ async function processAllLedgers(){
     const cascade=[];
     if(keys.ocrServiceUrl)cascade.push({name:'PaddleOCR (VPS)', fn:()=>callPaddleOCR(imgUrl,keys.ocrServiceUrl)});
     // Groq only — proven, fast, free
-    if(keys.groq)    cascade.push({name:'Groq', fn:()=>callGroqVision(imgUrl,LEDGER_PROMPT,keys.groq)});
+    if(keys.groq)    cascade.push({name:'Groq', fn:()=>callGroqVisionProxy(imgUrl,LEDGER_PROMPT,keys.groq)});
     // HF is always last — works without a key (rate-limited but functional)
     cascade.push({name:'HuggingFace', fn:()=>callHFVision(imgUrl,LEDGER_PROMPT,keys.hf||'')});
     return cascade;
@@ -1084,6 +1084,7 @@ async function callMistralVision(imageDataUrl,prompt,apiKey){
 
 // ── Claude (Anthropic) — Via Base44 proxy (avoids CORS) ──────────────────
 const CLAUDE_PROXY_URL='https://api.base44.com/api/apps/6a57168a8c411237376a1bf9/functions/claudeOcr';
+const GROQ_PROXY_URL='https://api.base44.com/api/apps/6a57168a8c411237376a1bf9/functions/groqOcr';
 async function callClaudeVision(imageDataUrl,prompt,apiKey){
   if(!apiKey)throw new Error('No Anthropic key');
   const resp=await fetch(CLAUDE_PROXY_URL,{
@@ -1186,6 +1187,27 @@ async function callPaddleOCR(imageDataUrl,serviceUrl){
       fully_paid: !!s.fully_paid
     }))
   });
+}
+
+
+// ── Groq Vision — Via Base44 proxy (avoids mobile network / CORS issues) ──
+async function callGroqVisionProxy(imageDataUrl, prompt, apiKey) {
+  if (!apiKey) throw new Error('No Groq key');
+  const resp = await fetch(GROQ_PROXY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageDataUrl, prompt, apiKey })
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error || 'Groq proxy ' + resp.status);
+  }
+  const data = await resp.json();
+  if (data.error) throw new Error(data.error);
+  let text = data.text || '';
+  text = text.replace(/<ildo>[\s\S]*?<\/ildo>/gi, '').trim();
+  console.log('[GroqProxy] model=' + data.model + ' (' + text.length + ' chars)');
+  return text;
 }
 
 async function callGroqVision(imageDataUrl,prompt,apiKey){

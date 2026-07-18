@@ -104,6 +104,28 @@ bloom-agent-v2/
 
 ## 📜 Change History (newest first)
 
+### 2026-07-18 — Signboard OCR fixed (was using dead models) + per-field scan removed
+- **Problem:** `callGroqVision()` (used by the signboard step) tried three
+  deprecated models — `llama-4-scout-17b`, `llama-4-maverick-17b`,
+  `llama-3.2-90b-vision-preview`. All three are decommissioned as of
+  June 17, 2026 and return 400s. Result: signboard OCR always failed,
+  agent always saw "AI could not read signboard — fill manually."
+- **Fix:** Replaced the model cascade with `qwen/qwen3.6-27b` — the exact
+  model + call pattern (`reasoning_effort:"none"`, `response_format:
+  json_object`, 45s timeout, retry on 429/503/529) already proven working
+  in **v1 production's** ledger OCR (`bloom-agent/app.js`). Signboard now
+  calls Groq directly (not the Base44 proxy) with this working config.
+- **Also removed:** the per-field 📷 scan buttons on every manual field
+  (school name, address, state, LGA, principal, phone, email) added in
+  the 2026-07-18 "OCR on all manual fields" change. Bayo wants the
+  signboard step to fill everything in one shot — no per-field scanning
+  clutter. `scanField()` function removed from `app.js`; camera buttons
+  and hidden file inputs removed from `index.html`.
+- **Note:** `callGroqVisionProxy()` (Base44 proxy) is UNCHANGED — ledger
+  OCR still uses it and is unaffected by this fix.
+- **Deployed:** cache bumped to `?v=9`.
+- **Found and fixed by:** Claude (Anthropic), via GitHub API push.
+
 ### 2026-07-18 — CRITICAL FIX: app.js syntax error blocked ALL logins
 - **Problem:** The "remove debug panels" edit left a stray `].join('');` inside
   `showDeepSeekKeyPrompt()` (line 344) with no matching array — a hard
@@ -177,4 +199,5 @@ bloom-agent-v2/
 ---
 
 *This document is maintained by Koda (Base44 Superagent). Updated before every build.*
+
 

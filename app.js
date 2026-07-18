@@ -345,9 +345,31 @@ async function processAllLedgers(){
     return;
   }
 
+  // ── Shared reading-discipline block ─────────────────────────────────────
+  // Applies to every OCR prompt in the app (signboard, ledger, and any
+  // future document type). The actual bug that caused every student to
+  // read as "OWING" wasn't a lack of names/columns — it was the prompt
+  // never telling the model to actively scan for status evidence instead
+  // of silently picking a default. This block fixes that at the root so
+  // future OCR features inherit the discipline instead of re-discovering
+  // this same bug.
+  const READING_DISCIPLINE=[
+    'READING DISCIPLINE — apply to every field, always:',
+    '- Transcribe exactly what is written. Do not paraphrase or "clean up" text.',
+    '- For NUMBERS: read digit by digit, not at a glance. Common handwriting',
+    '  confusions to double-check: 7 vs 1, 0 vs 6, 4 vs 9, 3 vs 8, 5 vs 6/8.',
+    '- For STATUS fields: actively scan for explicit keywords, ticks, or',
+    '  strikethroughs BEFORE deciding a value. Never pick a default status',
+    '  just because nothing else is obviously visible — that produces a',
+    '  confidently wrong answer, which is worse than no answer.',
+    '- If a field is illegible or you are not confident, output "UNCLEAR"',
+    '  for that field rather than guessing a plausible-looking value.'
+  ].join('\n');
+
   const LEDGER_PROMPT=[
-    'You are reading the LEFT HALF of a Nigerian SCHOOL FEES LEDGER (handwritten).',
-    'This image has been cropped — payment installment columns are NOT visible. Do not look for them.',
+    'You are reading the LEFT ~62% of a Nigerian SCHOOL FEES LEDGER (handwritten).',
+    'This image is cropped — the 2nd and 3rd payment-installment columns are',
+    'NOT visible. Do not look for them. The 1st part-payment/teller columns ARE visible.',
     'The columns you can see are:',
     '  Col 1: SERIAL NO (1, 2, 3...)',
     '  Col 2: SURNAME (family name — all caps)',
@@ -355,16 +377,35 @@ async function processAllLedgers(){
     '  Col 4: BALANCE FROM LAST TERM (debt carried forward — 0 or blank means none)',
     '  Col 5: CURRENT TERM FEES (the fee charged this term, e.g. 24000, 26000, 28000)',
     '  Col 6: TOTAL (col4 + col5 = everything this student owes)',
+    '  Col 7: 1ST PART PAYMENT (an amount, OR a handwritten status word)',
+    '  Col 8: TELLER NO / RECEIPT NO (often overwritten with a status word instead of a number)',
+    '',
+    READING_DISCIPLINE,
+    '',
+    'PAYMENT STATUS — this is the field that was getting this wrong before:',
+    'Look in columns 7-8 (and the space around/above/below them — handwriting is',
+    'often diagonal or overflows its cell) for any of these words or close variants:',
+    '  "FULLY PAID", "FULL PAID", "FULLY", "PAID", "F/PAID", "PART PAYMENT"',
+    'Decide payment_status using this priority:',
+    '  1. If "FULLY PAID"/"FULL PAID"/"FULLY"+"PAID" appears anywhere on the row -> "PAID"',
+    '  2. Else if a part-payment amount is visible and it is LESS than the total -> "PARTIAL"',
+    '  3. Else if the row is completely blank in columns 7-8 with no annotation -> "UNCLEAR"',
+    '  4. Only mark "OWING" if there is clear evidence of a remaining unpaid amount',
+    '     (a positive number written as still-owed, or an explicit note) — never as a',
+    '     silent default just because you found nothing else.',
+    'When in doubt between OWING and UNCLEAR, choose UNCLEAR — a wrong confident',
+    '"OWING" tells a parent who already paid that they still owe money.',
     '',
     'YOUR TASK: For every numbered student row return:',
-    '  name        = SURNAME + space + FIRSTNAME',
-    '  balance_bf  = col 4 value (integer, 0 if blank or dash)',
-    '  termFees    = col 5 value (integer)',
-    '  total       = col 6 value (integer)',
-    '  fully_paid  = true ONLY if the word FULLY, FULLY PAID, or F/PAID appears written on that row',
+    '  name           = SURNAME + space + FIRSTNAME',
+    '  balance_bf     = col 4 value (integer, 0 if blank or dash)',
+    '  termFees       = col 5 value (integer)',
+    '  total          = col 6 value (integer)',
+    '  payment_status = one of "PAID", "PARTIAL", "OWING", "UNCLEAR" (see rules above)',
+    '  ocr_confidence  = "HIGH", "MEDIUM", or "LOW" — your confidence in this row overall',
     '  detected_class = class label at the top of the page (e.g. K-G, BASIC FOUR, NURSERY 1, BASIC THREE)',
-    '  year        = year written at top of ledger (e.g. 2026)',
-    '  term        = term number at top of ledger (e.g. 3)',
+    '  year           = year written at top of ledger (e.g. 2026)',
+    '  term           = term number at top of ledger (e.g. 3)',
     '',
     'Nigerian SURNAMES (common): OGUNDETI, OYERINDE, OLATUNDE, OBASA, OKENDINMI, ILELABOYE,',
     'AFOLABI, OLIYIDE, KOLANDLE, ADEGUNLE, ADEOYE, SABIU, OGUNLADE, ALIMI, JOHN, AKINOLA,',
@@ -381,18 +422,15 @@ async function processAllLedgers(){
     'RULES:',
     '1. Every numbered row = one student. Read ALL rows. A page typically has 10-30 students.',
     '2. Crossed-out numbers: ignore the crossed-out value, read the correction written nearby.',
-    '3. BALANCE written in a cell = a note about outstanding debt, not a payment received.',
-    '4. Read every number DIGIT BY DIGIT, not at a glance — a misread digit (7 vs 1, 0 vs 6,',
-    '   5 vs 8) silently produces a wrong total with no visible error downstream.',
-    '5. SELF-CHECK before finalizing each row: total must equal balance_bf + termFees.',
+    '3. SELF-CHECK before finalizing each row: total must equal balance_bf + termFees.',
     '   If they do not match, re-read that row\'s digits and correct before moving on.',
-    '6. Return ONLY valid JSON — no markdown fences, no explanation text.',
+    '4. Return ONLY valid JSON — no markdown fences, no explanation text.',
     '',
     'EXAMPLE OUTPUT:',
     '{"detected_class":"K-G","year":"2026","term":"3","students":[',
-    '{"name":"OLIYIDE GODWIN","balance_bf":0,"termFees":24000,"total":24000,"fully_paid":true},',
-    '{"name":"KASALI RASAQ","balance_bf":5000,"termFees":24000,"total":29000,"fully_paid":false},',
-    '{"name":"JOHN DEBORAH","balance_bf":3000,"termFees":26000,"total":29000,"fully_paid":false}',
+    '{"name":"OLIYIDE GODWIN","balance_bf":0,"termFees":24000,"total":24000,"payment_status":"PAID","ocr_confidence":"HIGH"},',
+    '{"name":"KASALI RASAQ","balance_bf":5000,"termFees":24000,"total":29000,"payment_status":"PARTIAL","ocr_confidence":"MEDIUM"},',
+    '{"name":"JOHN DEBORAH","balance_bf":3000,"termFees":26000,"total":29000,"payment_status":"UNCLEAR","ocr_confidence":"LOW"}',
     ']}'
   ].join('\n');
 
@@ -494,16 +532,28 @@ async function processAllLedgers(){
       const key=s.name.toLowerCase().replace(/[^a-z]/g,'');
       if(seenNames.has(key))return;
       seenNames.add(key);
-      // Payment columns were cropped out — derive paid/status from fully_paid flag
+      // Derive paid/status from the model's payment_status field. UNCLEAR
+      // (or a missing field, for backward compatibility with any provider
+      // still returning the old fully_paid boolean) becomes "NEEDS REVIEW"
+      // — a distinct state, never silently folded into OWING.
       s.termFees = s.termFees||s.total||0;
       s.balance  = s.balance_bf||s.balance||0;
       s.total    = s.total||(s.termFees+s.balance);
-      if(s.fully_paid){
+      const ps=String(s.payment_status||'').toUpperCase().trim();
+      if(ps==='PAID'||s.fully_paid===true){
         s.paid   = s.paid||s.total;
         s.status = 'FULLY PAID';
-      } else {
+      } else if(ps==='PARTIAL'){
         s.paid   = s.paid||0;
-        s.status = s.paid>=s.total&&s.total>0?'FULLY PAID':s.paid>0?'PART PAID':'OWING';
+        s.status = 'PART PAID';
+      } else if(ps==='OWING'){
+        s.paid   = s.paid||0;
+        s.status = 'OWING';
+      } else {
+        // UNCLEAR, empty, or unrecognized value — flag for manual review
+        // rather than guessing. Never counted as OWING in totals below.
+        s.paid   = s.paid||0;
+        s.status = 'NEEDS REVIEW';
       }
       // Attach term/year detected from this page if available
       if(!s.term&&selDetectedTerm)s.term=selDetectedTerm;
@@ -535,7 +585,10 @@ function calcConf(s){
   if(s.class&&s.class!=='UNKNOWN')c+=15;
   if((s.termFees||0)>0)c+=10;
   if((s.paid||0)>0)c+=5;
-  return Math.min(99,c);
+  const oc=String(s.ocr_confidence||'').toUpperCase();
+  if(oc==='HIGH')c+=10; else if(oc==='LOW')c-=20;
+  if(s.status==='NEEDS REVIEW')c-=15;
+  return Math.max(10,Math.min(99,c));
 }
 
 function addLiveItem(container,s){
@@ -572,6 +625,7 @@ function showLedgerResults(){
     const paid=students.filter(s=>s.status==='FULLY PAID').length;
     const part=students.filter(s=>s.status==='PART PAID').length;
     const owing=students.filter(s=>s.status==='OWING').length;
+    const review=students.filter(s=>s.status==='NEEDS REVIEW').length;
     const div=document.createElement('div');div.className='class-g';
     const rows=students.map((s,i)=>{
       const conf=s.confidence||50;
@@ -580,7 +634,7 @@ function showLedgerResults(){
     }).join('');
     const paidPct=Math.round((paid/students.length)*100);
     const partPct=Math.round((part/students.length)*100);
-    div.innerHTML='<div class="class-hdr"><div style="display:flex;align-items:center;gap:5px;"><span class="class-name">'+esc(cls)+'</span><span class="badge bb">'+students.length+'</span></div><div style="display:flex;gap:3px;">'+(paid?'<span class="badge bg">'+paid+'✓</span>':'')+(part?'<span class="badge ba">'+part+'½</span>':'')+(owing?'<span class="badge br">'+owing+'✗</span>':'')+'</div></div><div class="cbar-bg"><div class="cbar-paid" style="width:'+paidPct+'%;"></div><div class="cbar-part" style="width:'+partPct+'%;"></div></div><div style="max-height:190px;overflow-y:auto;margin-top:6px;">'+rows+'</div>';
+    div.innerHTML='<div class="class-hdr"><div style="display:flex;align-items:center;gap:5px;"><span class="class-name">'+esc(cls)+'</span><span class="badge bb">'+students.length+'</span></div><div style="display:flex;gap:3px;">'+(paid?'<span class="badge bg">'+paid+'✓</span>':'')+(part?'<span class="badge ba">'+part+'½</span>':'')+(owing?'<span class="badge br">'+owing+'✗</span>':'')+(review?'<span class="badge bq">'+review+'?</span>':'')+'</div></div><div class="cbar-bg"><div class="cbar-paid" style="width:'+paidPct+'%;"></div><div class="cbar-part" style="width:'+partPct+'%;"></div></div><div style="max-height:190px;overflow-y:auto;margin-top:6px;">'+rows+'</div>';
     groupsEl.appendChild(div);
   }
 
@@ -611,14 +665,24 @@ function populatePitch(){
   $('pitch-name').textContent=name;$('pitch-loc').textContent=loc;
   const total=allStudents.length,classes=Object.keys(classGroups).length;
   $('p-students').textContent=total;$('p-classes').textContent=classes;
-  let tPaid=0,tDue=0;
-  allStudents.forEach(s=>{tDue+=(s.termFees||0);tPaid+=(s.paid||0);});
+  let tPaid=0,tDue=0,reviewCnt=0,reviewAmt=0;
+  allStudents.forEach(s=>{
+    if(s.status==='NEEDS REVIEW'){
+      // Payment status couldn't be determined — do NOT count this student's
+      // fee as confidently "outstanding". That was the exact bug that made
+      // paid students show up as owing. Track separately instead.
+      reviewCnt++;reviewAmt+=(s.termFees||0);
+      return;
+    }
+    tDue+=(s.termFees||0);tPaid+=(s.paid||0);
+  });
   const rate=tDue>0?Math.round((tPaid/tDue)*100):0;
   const outstanding=tDue-tPaid;
   const owingCnt=allStudents.filter(s=>s.status==='OWING'||s.status==='PART PAID').length;
   $('p-rate').textContent=rate+'%';
   $('p-outstanding').textContent=fmt(outstanding);
-  $('p-owing-txt').textContent=owingCnt+' student'+(owingCnt!==1?'s':'')+' with outstanding fees';
+  $('p-owing-txt').textContent=owingCnt+' student'+(owingCnt!==1?'s':'')+' with outstanding fees'
+    +(reviewCnt?' · '+reviewCnt+' need'+(reviewCnt===1?'s':'')+' manual review ('+fmt(reviewAmt)+' not counted above)':'');
   const barsEl=$('pitch-bars');barsEl.innerHTML='';
   for(const[cls,students]of Object.entries(classGroups)){
     const paid=students.filter(s=>s.status==='FULLY PAID').length;
@@ -835,14 +899,17 @@ async function compressLedger(dataUrl){
     img.onload=()=>{
       const origW=img.naturalWidth||img.width||1000;
       const origH=img.naturalHeight||img.height||750;
-      // Crop to LEFT 50% before scaling. The ledger has ~14 columns; the
-      // critical ones (Serial, Surname, Firstname, Balance, Current Fees,
-      // Total) all live in the left half. Payment-installment columns
-      // (7-14) live in the right half and are dropped — Groq reads
-      // fully_paid from the FULLY/F-PAID marker instead of summing them.
-      // Cropping first means each critical column is ~2x larger in the
-      // final image than scaling the full page would give.
-      const cropW=Math.round(origW*0.5);
+      // Crop to LEFT 62% before scaling. The ledger has ~15-16 columns.
+      // The core 6 (Serial, Surname, Firstname, Balance, Current Fees, Total)
+      // are essential for names/amounts. But "FULLY PAID"/"PAID" status
+      // annotations are physically handwritten around the 1st Part Payment
+      // and Teller No columns (columns 6-7) — right at the old 50% boundary.
+      // That's the real root cause of payment status always reading OWING:
+      // the crop was cutting through the exact region where paid/owing
+      // evidence lives. 62% reliably includes through that column while
+      // still cropping out the 2nd/3rd part payment columns (8-14) that
+      // don't matter — still a real resolution win over the uncropped page.
+      const cropW=Math.round(origW*0.62);
       const scale=Math.min(1,1024/cropW);
       const outW=Math.round(cropW*scale);
       const outH=Math.round(origH*scale);
@@ -980,8 +1047,11 @@ async function callPaddleOCR(imageDataUrl,serviceUrl){
       balance_bf: s.balance_bf||0,
       termFees: s.termFees||0,
       total: s.total||0,
-      paid: s.fully_paid?(s.total||0):0,
-      fully_paid: !!s.fully_paid
+      // PaddleOCR only returns a boolean, not the richer PAID/PARTIAL/OWING/
+      // UNCLEAR status. Default to UNCLEAR rather than OWING when it's not
+      // explicitly true — same never-guess-a-negative-status discipline as
+      // the Groq prompt.
+      payment_status: s.fully_paid?'PAID':'UNCLEAR'
     }))
   });
 }

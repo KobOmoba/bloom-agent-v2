@@ -987,7 +987,7 @@ async function callGroqVision(imageDataUrl,prompt,apiKey,_retry){
           {type:'image_url',image_url:{url:'data:'+mimeType+';base64,'+base64}},
           {type:'text',text:prompt}
         ]}],
-        temperature:0.2,
+        temperature:0,
         max_tokens:600,
         reasoning_effort:'none',
         response_format:{type:'json_object'}

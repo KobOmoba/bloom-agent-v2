@@ -104,6 +104,44 @@ bloom-agent-v2/
 
 ## 📜 Change History (newest first)
 
+### 2026-07-18 — FIX: payment status defaulting to OWING for everyone (₦928,000 false-owing bug)
+- **Bug report (external code review, cross-checked against the actual
+  32-student test run):** every student was tagged OWING regardless of
+  what the ledger actually said — including rows explicitly marked
+  "FULLY PAID" in the handwriting. Summary showed 0% Fees Paid and
+  ₦928,000 outstanding for Future Promise Comprehensive College, a
+  confidently wrong financial figure that was about to be submitted.
+- **Root cause — deeper than the suggested fix assumed:** the previous
+  **50%** crop cut almost exactly through the column region where
+  "FULLY PAID"/"PAID" is physically handwritten (around the 1st Part
+  Payment / Teller No columns). The status evidence wasn't being ignored
+  by the prompt — it usually wasn't even in the image the model received.
+  Confirmed by re-examining the original ledger photos: paid annotations
+  consistently sit right at that boundary. Widened crop from 50% -> **62%**
+  to reliably include that region while still cropping out the 2nd/3rd
+  payment columns that don't matter.
+- **Also applied the suggested prompt-discipline fix** (from an external
+  prompt-engineering review): replaced the fragile `fully_paid` boolean
+  with a `payment_status` enum (`PAID`/`PARTIAL`/`OWING`/`UNCLEAR`), added
+  a shared `READING_DISCIPLINE` block (digit-by-digit numbers, active
+  keyword scanning instead of defaulting, "when in doubt say UNCLEAR not
+  OWING"), and added per-row `ocr_confidence` (HIGH/MEDIUM/LOW) from the
+  model itself, folded into the existing numeric confidence score.
+- **New "NEEDS REVIEW" status:** when the model genuinely can't tell,
+  the student is now flagged NEEDS REVIEW — a distinct state, never
+  silently folded into OWING. Shown with its own badge (purple, `?`) in
+  both the agent results screen and critically **the principal-facing
+  pitch screen**, where the outstanding-fees total now explicitly
+  excludes NEEDS REVIEW students' fees from the confident total instead
+  of counting them as owed by default (same bug, one layer up — fixed in
+  both places).
+- **PaddleOCR (VPS fallback)** mapping updated to match: its boolean now
+  maps to PAID/UNCLEAR (never OWING) for the same reason.
+- **Deployed:** cache bumped to `?v=14`.
+- **Not yet re-tested on device.**
+- **Found by:** external code review + bug report cross-referenced
+  against real ledger photos. Root cause and fix by Claude (Anthropic).
+
 ### 2026-07-18 — SECOND critical fix: whole-page OCR failures were completely silent
 - **Bayo caught this one directly:** the 5-page field test photographed
   5 pages, but the results only showed **4 classes** — "BASIC 1 & BASIC 2"
@@ -307,6 +345,7 @@ bloom-agent-v2/
 ---
 
 *This document is maintained by Koda (Base44 Superagent). Updated before every build.*
+
 
 
 

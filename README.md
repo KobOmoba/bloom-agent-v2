@@ -104,6 +104,32 @@ bloom-agent-v2/
 
 ## 📜 Change History (newest first)
 
+### 2026-07-18 — SECOND critical fix: whole-page OCR failures were completely silent
+- **Bayo caught this one directly:** the 5-page field test photographed
+  5 pages, but the results only showed **4 classes** — "BASIC 1 & BASIC 2"
+  (11 students, confirmed present in the photo thumbnails) vanished
+  entirely with zero error, zero warning, nothing in the UI.
+- **Root cause:** in `processAllLedgers()`, when every provider in the
+  cascade returns 0 students or throws for a given page, the code already
+  had a comment saying *"diagnostic screen removed — agent only sees
+  results"* — meaning a fully failed page was silently skipped. No banner,
+  no log visible to the agent, no record that anything went wrong. An
+  agent could submit a deal missing an entire class of students and never
+  know it.
+- **Fix:** added a `failedPages` array that records the page number
+  whenever a page's cascade fully fails. `showLedgerResults()` now renders
+  a red warning card at the top of the results listing the exact page
+  number(s) that returned 0 students, telling the agent those students are
+  NOT included and to retake the photo(s) or add them manually.
+- **This is a different bug from the max_tokens truncation fixed earlier
+  today** — that one caused partial data loss on large pages; this one
+  caused total data loss on a page with a normal row count (11), most
+  likely a transient provider failure (network blip / rate limit) that
+  the retry logic didn't recover from before falling through.
+- **Deployed:** cache bumped to `?v=13`.
+- **Found by:** Bayo, from the field test screenshots. Fixed by Claude
+  (Anthropic), via GitHub API push.
+
 ### 2026-07-18 — CRITICAL FIX: ledger OCR silently truncating large pages
 - **5-page real field test (Future Promise Comprehensive College):** ground
   truth manually counted from the actual ledger photos was ~62-65 students
@@ -281,6 +307,7 @@ bloom-agent-v2/
 ---
 
 *This document is maintained by Koda (Base44 Superagent). Updated before every build.*
+
 
 
 

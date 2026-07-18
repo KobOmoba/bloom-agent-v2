@@ -12,7 +12,7 @@ let agent=null,apiKeys=null,currentTab='wizard';
 let selDetectedClass='';  // class detected from ledger header
 let timerSec=0,timerInterval=null;
 let ledgerPageCount=1,ledgerImages={};
-let allStudents=[],classGroups={},selTier=null,selDetectedTerm='',selDetectedYear='';
+let allStudents=[],classGroups={},selTier=null,selDetectedTerm='',selDetectedYear='',failedPages=[];
 
 // ── Tiers ──────────────────────────────────────────────────────────────────
 const TIERS=[
@@ -396,7 +396,7 @@ async function processAllLedgers(){
     ']}'
   ].join('\n');
 
-  allStudents=[];classGroups={};selDetectedClass='';selDetectedTerm='';selDetectedYear='';
+  allStudents=[];classGroups={};selDetectedClass='';selDetectedTerm='';selDetectedYear='';failedPages=[];
 
   // Build cascade in priority order: PaddleOCR (Oracle VPS, coordinate-based
   // column reading — free forever, structurally more reliable than vision-LLM
@@ -470,6 +470,7 @@ async function processAllLedgers(){
 
     if(!succeeded){
       status.textContent='Page '+pageNum+': all providers returned 0 students';
+      failedPages.push(pageNum);
       // ── Show diagnostic screen ─────────────────────────────────────────
       // diagnostic screen removed — agent only sees results
       await new Promise(r=>setTimeout(r,1500));
@@ -557,6 +558,16 @@ function showLedgerResults(){
   $('as-conf').textContent=avgConf+'%';
 
   const groupsEl=$('class-groups');groupsEl.innerHTML='';
+
+  if(failedPages.length){
+    const warn=document.createElement('div');
+    warn.className='card';
+    warn.style.cssText='background:rgba(220,38,38,.12);border:1px solid rgba(220,38,38,.35);margin-bottom:.65rem;';
+    const pageList=failedPages.join(', ');
+    warn.innerHTML='<div style="font-weight:800;color:#fca5a5;font-size:.85rem;">⚠️ Page'+(failedPages.length>1?'s':'')+' '+pageList+' could not be read</div>'
+      +'<div style="font-size:.76rem;color:#fecaca;margin-top:3px;">All OCR providers returned 0 students for '+(failedPages.length>1?'these pages':'this page')+'. Those students are NOT included below. Retake the photo'+(failedPages.length>1?'s':'')+' and tap "Read All Pages with AI" again, or add '+(failedPages.length>1?'them':'it')+' manually.</div>';
+    groupsEl.appendChild(warn);
+  }
   for(const[cls,students]of Object.entries(classGroups)){
     const paid=students.filter(s=>s.status==='FULLY PAID').length;
     const part=students.filter(s=>s.status==='PART PAID').length;
@@ -579,7 +590,7 @@ function showLedgerResults(){
     if(tc)tc.innerHTML='<div class="card"><div class="ct">💡 Auto-selected Plan</div><p style="font-size:.74rem;color:var(--sub);margin-bottom:.4rem;">Based on '+allStudents.length+' students scanned</p><div style="background:rgba(37,99,235,.1);border:1px solid rgba(37,99,235,.3);border-radius:10px;padding:.65rem;"><div style="font-weight:800;">'+esc(selTier.name)+'</div><div style="color:var(--money);font-weight:700;">'+fmt(selTier.price)+'/term</div><div style="font-size:.7rem;color:var(--sub);margin-top:3px;">Your commission: <strong style="color:var(--money);">'+fmt(comm)+'</strong></div></div><label style="margin-top:.5rem;">Change plan (optional)</label><select id="tier-override" onchange="overrideTier(this.value)">'+TIERS.map(t=>'<option value="'+t.max+'"'+(t.max===selTier.max?' selected':'')+'>'+t.name+' — '+fmt(t.price)+'/term</option>').join('')+'</select></div>';
   }
 
-  // 0 students: silent — no error shown to agent
+  // Failed-page warning (if any) rendered above, inside class-groups
 
   $('step2-nav').style.display='block';
 }

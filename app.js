@@ -326,6 +326,229 @@ function captureLedger(idx){
 
 function skipLedger(){allStudents=[];classGroups={};$('ledger-results').style.display='block';$('step2-nav').style.display='block';}
 
+// ── Shared reading-discipline block ─────────────────────────────────────────
+// Applies to every OCR prompt in the app (signboard, ledger, and any
+// future document type). The actual bug that caused every student to
+// read as "OWING" wasn't a lack of names/columns — it was the prompt
+// never telling the model to actively scan for status evidence instead
+// of silently picking a default. This block fixes that at the root so
+// future OCR features inherit the discipline instead of re-discovering
+// this same bug.
+const READING_DISCIPLINE=[
+  'READING DISCIPLINE — apply to every field, always:',
+  '- Transcribe exactly what is written. Do not paraphrase or "clean up" text.',
+  '- For NUMBERS: read digit by digit, not at a glance. Common handwriting',
+  '  confusions to double-check: 7 vs 1, 0 vs 6, 4 vs 9, 3 vs 8, 5 vs 6/8.',
+  '- For STATUS fields: actively scan for explicit keywords, ticks, or',
+  '  strikethroughs BEFORE deciding a value. Never pick a default status',
+  '  just because nothing else is obviously visible — that produces a',
+  '  confidently wrong answer, which is worse than no answer.',
+  '- If a field is illegible or you are not confident, output "UNCLEAR"',
+  '  for that field rather than guessing a plausible-looking value.'
+].join('\n');
+
+const LEDGER_PROMPT=[
+  'You are reading the LEFT ~62% of a Nigerian SCHOOL FEES LEDGER (handwritten).',
+  'This image is cropped — the 2nd and 3rd payment-installment columns are',
+  'NOT visible. Do not look for them. The 1st part-payment/teller columns ARE visible.',
+  'The columns you can see are:',
+  '  Col 1: SERIAL NO (1, 2, 3...)',
+  '  Col 2: SURNAME (family name — all caps)',
+  '  Col 3: FIRSTNAME (given name — all caps)',
+  '  Col 4: BALANCE FROM LAST TERM (debt carried forward — 0 or blank means none)',
+  '  Col 5: CURRENT TERM FEES (the fee charged this term, e.g. 24000, 26000, 28000)',
+  '  Col 6: TOTAL (col4 + col5 = everything this student owes)',
+  '  Col 7: 1ST PART PAYMENT (an amount, OR a handwritten status word)',
+  '  Col 8: TELLER NO / RECEIPT NO (often overwritten with a status word instead of a number)',
+  '',
+  READING_DISCIPLINE,
+  '',
+  'PAYMENT STATUS — this is the field that was getting this wrong before:',
+  'Look in columns 7-8 (and the space around/above/below them — handwriting is',
+  'often diagonal or overflows its cell) for any of these words or close variants:',
+  '  "FULLY PAID", "FULL PAID", "FULLY", "PAID", "F/PAID", "PART PAYMENT"',
+  'Decide payment_status using this priority:',
+  '  1. If "FULLY PAID"/"FULL PAID"/"FULLY"+"PAID" appears anywhere on the row -> "PAID"',
+  '  2. Else if a part-payment amount is visible and it is LESS than the total -> "PARTIAL"',
+  '  3. Else if the row is completely blank in columns 7-8 with no annotation -> "UNCLEAR"',
+  '  4. Only mark "OWING" if there is clear evidence of a remaining unpaid amount',
+  '     (a positive number written as still-owed, or an explicit note) — never as a',
+  '     silent default just because you found nothing else.',
+  'When in doubt between OWING and UNCLEAR, choose UNCLEAR — a wrong confident',
+  '"OWING" tells a parent who already paid that they still owe money.',
+  '',
+  'YOUR TASK: For every numbered student row return:',
+  '  name           = SURNAME + space + FIRSTNAME',
+  '  balance_bf     = col 4 value (integer, 0 if blank or dash)',
+  '  termFees       = col 5 value (integer)',
+  '  total          = col 6 value (integer)',
+  '  payment_status = one of "PAID", "PARTIAL", "OWING", "UNCLEAR" (see rules above)',
+  '  ocr_confidence  = "HIGH", "MEDIUM", or "LOW" — your confidence in this row overall',
+  '  detected_class = class label at the top of the page (e.g. K-G, BASIC FOUR, NURSERY 1, BASIC THREE)',
+  '  year           = year written at top of ledger (e.g. 2026)',
+  '  term           = term number at top of ledger (e.g. 3)',
+  '',
+  'Nigerian SURNAMES (common): OGUNDETI, OYERINDE, OLATUNDE, OBASA, OKENDINMI, ILELABOYE,',
+  'AFOLABI, OLIYIDE, KOLANDLE, ADEGUNLE, ADEOYE, SABIU, OGUNLADE, ALIMI, JOHN, AKINOLA,',
+  'KASALI, ALAWODE, OYESANWO, OGUNDEYI, ALAO, AKINWANDE, OLAWALE, ODEREYE, AKINBELE,',
+  'ADEBAYO, AYANDIYA, SHONIPE, GBELEKALE, FAFIOLU, DADA, MOSES, OYEBOLA, ADERIBIGBE,',
+  'LAWAL, OLAYINOLA, IDOWU, ATAJA, AWOLOWO, AKINDELE, OGUNSOLA',
+  '',
+  'Nigerian FIRSTNAMES (common): SALAM, OYEDEPO, WAJUD, MICHEAL, IBRAHIM, RAHMON, AISHAT,',
+  'CHRISTIANA, AFEEZ, DOMINION, SAMUEL, MALEEK, FATHIA, INIOLUWA, QUARIBAT, AWAL, GOLD,',
+  'TOHEEB, GODWIN, ELIZABETH, TIBESIMI, WASLAT, MOZEED, DEBORAH, SHINDARA, GABRIEL,',
+  'RASAQ, ENOCH, ABIGEAL, KOREDE, ADEMIDE, AMINDAT, WIQUYAT, ISREA, DORCAS, MARIAM,',
+  'CYNTHIA, AMINAT, FATOBI, MUSTEQEEM, GIFT, SUCCESS, RASHEEDAT, KOREDE',
+  '',
+  'RULES:',
+  '1. Every numbered row = one student. Read ALL rows. A page typically has 10-30 students.',
+  '2. Crossed-out numbers: ignore the crossed-out value, read the correction written nearby.',
+  '3. SELF-CHECK before finalizing each row: total must equal balance_bf + termFees.',
+  '   If they do not match, re-read that row\'s digits and correct before moving on.',
+  '4. Return ONLY valid JSON — no markdown fences, no explanation text.',
+  '',
+  'EXAMPLE OUTPUT:',
+  '{"detected_class":"K-G","year":"2026","term":"3","students":[',
+  '{"name":"OLIYIDE GODWIN","balance_bf":0,"termFees":24000,"total":24000,"payment_status":"PAID","ocr_confidence":"HIGH"},',
+  '{"name":"KASALI RASAQ","balance_bf":5000,"termFees":24000,"total":29000,"payment_status":"PARTIAL","ocr_confidence":"MEDIUM"},',
+  '{"name":"JOHN DEBORAH","balance_bf":3000,"termFees":26000,"total":29000,"payment_status":"UNCLEAR","ocr_confidence":"LOW"}',
+  ']}'
+].join('\n');
+
+// ── Cascade builder — shared by full scan and targeted retry ────────────────
+// PaddleOCR (Oracle VPS, coordinate-based column reading — free forever,
+// structurally more reliable than vision-LLM guessing) tried first when
+// configured. Direct Groq (qwen3.6-27b) next. HuggingFace last — works
+// without a key, rate-limited but functional.
+function buildLedgerCascade(imgUrl,keys){
+  const cascade=[];
+  if(keys.ocrServiceUrl)cascade.push({name:'PaddleOCR (VPS)', fn:()=>callPaddleOCR(imgUrl,keys.ocrServiceUrl)});
+  if(keys.groq)cascade.push({name:'Groq', fn:()=>callGroqVision(imgUrl,LEDGER_PROMPT,keys.groq,4096)});
+  cascade.push({name:'HuggingFace', fn:()=>callHFVision(imgUrl,LEDGER_PROMPT,keys.hf||'')});
+  return cascade;
+}
+
+// ── Process one ledger page — shared by full scan and targeted retry ────────
+// Returns {pageNum, succeeded, students, pageClass, term, year} without
+// touching allStudents/classGroups — the caller decides how to merge.
+async function processOnePage(idxKey,keys,statusEl,imagesTotal){
+  const url=ledgerImages[idxKey];
+  const pageNum=parseInt(idxKey)+1;
+  if(statusEl)statusEl.textContent='Compressing page '+pageNum+'...';
+  let compressed;
+  try{compressed=await compressLedger(url);}
+  catch(e){console.warn('Compress failed:',e.message);compressed=url;}
+
+  const cascade=buildLedgerCascade(compressed,keys);
+  let pageStudents=[],pageClass='',succeeded=false,term='',year='';
+
+  for(const provider of cascade){
+    if(statusEl)statusEl.textContent='Page '+pageNum+(imagesTotal?'/'+imagesTotal:'')+' → '+provider.name+'...';
+    try{
+      const rawText=await Promise.race([
+        provider.fn(),
+        new Promise((_,rej)=>setTimeout(()=>rej(new Error(provider.name+' timed out after 30s')),30000))
+      ]);
+      const result=parseLedgerJSON(rawText);
+      if(result.students.length>0){
+        pageStudents=result.students;
+        pageClass=result.detected_class;
+        term=result.term;year=result.year;
+        console.log('[v2 Ledger] '+provider.name+' page '+pageNum+': '+pageStudents.length+' students');
+        succeeded=true;
+        break;
+      }
+      console.warn('[v2 Ledger] '+provider.name+': 0 students — trying next');
+    }catch(e){
+      console.warn('[v2 Ledger] '+provider.name+' error:',e.message);
+    }
+  }
+  return{pageNum,succeeded,students:pageStudents,pageClass,term,year};
+}
+
+// ── Merge one page's results into allStudents/classGroups (dedup by name) ──
+function mergePageIntoResults(pageStudents,pageClass,term,year){
+  if(pageClass){
+    const dc=String(pageClass).trim().toUpperCase();
+    if(dc&&dc!=='NULL'&&dc!=='UNKNOWN')selDetectedClass=dc;
+  }
+  if(term&&String(term).trim())selDetectedTerm=String(term).trim();
+  if(year&&String(year).trim())selDetectedYear=String(year).trim();
+
+  const seenNames=new Set(allStudents.map(s=>s.name.toLowerCase().replace(/[^a-z]/g,'')));
+  const added=[];
+  pageStudents.forEach(s=>{
+    if(!s.name||s.name.length<2)return;
+    s.name=s.name.toUpperCase().replace(/[^A-Z\s'\-.]/g,'').replace(/\s+/g,' ').trim();
+    if(!s.name||s.name.length<2)return;
+    const key=s.name.toLowerCase().replace(/[^a-z]/g,'');
+    if(seenNames.has(key))return;
+    seenNames.add(key);
+    s.termFees = s.termFees||s.total||0;
+    s.balance  = s.balance_bf||s.balance||0;
+    s.total    = s.total||(s.termFees+s.balance);
+    const ps=String(s.payment_status||'').toUpperCase().trim();
+    if(ps==='PAID'||s.fully_paid===true){
+      s.paid   = s.paid||s.total;
+      s.status = 'FULLY PAID';
+    } else if(ps==='PARTIAL'){
+      s.paid   = s.paid||0;
+      s.status = 'PART PAID';
+    } else if(ps==='OWING'){
+      s.paid   = s.paid||0;
+      s.status = 'OWING';
+    } else {
+      s.paid   = s.paid||0;
+      s.status = 'NEEDS REVIEW';
+    }
+    s.confidence=calcConf(s);
+    s.class=pageClass?String(pageClass).trim().toUpperCase():(selDetectedClass||'UNKNOWN');
+    allStudents.push(s);
+    const cls=s.class;
+    if(!classGroups[cls])classGroups[cls]=[];
+    classGroups[cls].push(s);
+    added.push(s);
+  });
+  return added;
+}
+
+// ── Retry ONLY the pages that failed — does not touch pages that already ───
+// succeeded, and does not re-spend time/quota re-scanning good pages.
+async function retryFailedPages(){
+  if(!failedPages.length){alert('Nothing to retry — no failed pages.');return;}
+  const pagesToRetry=[...failedPages];
+  $('ledger-proc').style.display='block';
+  $('ledger-results').style.display='none';
+  const prog=$('ledger-prog'),status=$('ledger-status');
+  prog.style.width='10%';
+  const keys=await _getApiKeys();
+
+  const stillFailed=[];
+  for(let i=0;i<pagesToRetry.length;i++){
+    const pageNum=pagesToRetry[i];
+    const idxKey=String(pageNum-1);
+    if(!ledgerImages[idxKey]){stillFailed.push(pageNum);continue;}
+    prog.style.width=Math.round((i/pagesToRetry.length)*85)+'%';
+    if(i>0){
+      for(let s=20;s>0;s--){
+        status.textContent='Cooldown ('+s+'s) before retrying page '+pageNum+'...';
+        await new Promise(r=>setTimeout(r,1000));
+      }
+    }
+    const result=await processOnePage(idxKey,keys,status,pagesToRetry.length);
+    if(result.succeeded){
+      mergePageIntoResults(result.students,result.pageClass,result.term,result.year);
+    } else {
+      stillFailed.push(pageNum);
+    }
+  }
+  failedPages=stillFailed;
+  selTier=getTier(allStudents.length);
+  prog.style.width='100%';
+  status.textContent='Retry done — '+allStudents.length+' students total';
+  setTimeout(()=>{$('ledger-proc').style.display='none';showLedgerResults();},600);
+}
+
 async function processAllLedgers(){
   const images=Object.entries(ledgerImages);
   if(!images.length){alert('Photograph at least one ledger page first.');return;}
@@ -335,124 +558,21 @@ async function processAllLedgers(){
   const prog=$('ledger-prog'),status=$('ledger-status');
   prog.style.width='5%';
 
-  // ── Fetch provider keys once ────────────────────────────────────────────
   const keys=await _getApiKeys();
   const hasAnyKey=keys.groq||keys.hf||keys.ocrServiceUrl;
   if(!hasAnyKey){
     $('ledger-proc').style.display='none';
-    // no-keys error suppressed — agent only sees success
     $('ledger-results').style.display='block';
     return;
   }
 
-  // ── Shared reading-discipline block ─────────────────────────────────────
-  // Applies to every OCR prompt in the app (signboard, ledger, and any
-  // future document type). The actual bug that caused every student to
-  // read as "OWING" wasn't a lack of names/columns — it was the prompt
-  // never telling the model to actively scan for status evidence instead
-  // of silently picking a default. This block fixes that at the root so
-  // future OCR features inherit the discipline instead of re-discovering
-  // this same bug.
-  const READING_DISCIPLINE=[
-    'READING DISCIPLINE — apply to every field, always:',
-    '- Transcribe exactly what is written. Do not paraphrase or "clean up" text.',
-    '- For NUMBERS: read digit by digit, not at a glance. Common handwriting',
-    '  confusions to double-check: 7 vs 1, 0 vs 6, 4 vs 9, 3 vs 8, 5 vs 6/8.',
-    '- For STATUS fields: actively scan for explicit keywords, ticks, or',
-    '  strikethroughs BEFORE deciding a value. Never pick a default status',
-    '  just because nothing else is obviously visible — that produces a',
-    '  confidently wrong answer, which is worse than no answer.',
-    '- If a field is illegible or you are not confident, output "UNCLEAR"',
-    '  for that field rather than guessing a plausible-looking value.'
-  ].join('\n');
-
-  const LEDGER_PROMPT=[
-    'You are reading the LEFT ~62% of a Nigerian SCHOOL FEES LEDGER (handwritten).',
-    'This image is cropped — the 2nd and 3rd payment-installment columns are',
-    'NOT visible. Do not look for them. The 1st part-payment/teller columns ARE visible.',
-    'The columns you can see are:',
-    '  Col 1: SERIAL NO (1, 2, 3...)',
-    '  Col 2: SURNAME (family name — all caps)',
-    '  Col 3: FIRSTNAME (given name — all caps)',
-    '  Col 4: BALANCE FROM LAST TERM (debt carried forward — 0 or blank means none)',
-    '  Col 5: CURRENT TERM FEES (the fee charged this term, e.g. 24000, 26000, 28000)',
-    '  Col 6: TOTAL (col4 + col5 = everything this student owes)',
-    '  Col 7: 1ST PART PAYMENT (an amount, OR a handwritten status word)',
-    '  Col 8: TELLER NO / RECEIPT NO (often overwritten with a status word instead of a number)',
-    '',
-    READING_DISCIPLINE,
-    '',
-    'PAYMENT STATUS — this is the field that was getting this wrong before:',
-    'Look in columns 7-8 (and the space around/above/below them — handwriting is',
-    'often diagonal or overflows its cell) for any of these words or close variants:',
-    '  "FULLY PAID", "FULL PAID", "FULLY", "PAID", "F/PAID", "PART PAYMENT"',
-    'Decide payment_status using this priority:',
-    '  1. If "FULLY PAID"/"FULL PAID"/"FULLY"+"PAID" appears anywhere on the row -> "PAID"',
-    '  2. Else if a part-payment amount is visible and it is LESS than the total -> "PARTIAL"',
-    '  3. Else if the row is completely blank in columns 7-8 with no annotation -> "UNCLEAR"',
-    '  4. Only mark "OWING" if there is clear evidence of a remaining unpaid amount',
-    '     (a positive number written as still-owed, or an explicit note) — never as a',
-    '     silent default just because you found nothing else.',
-    'When in doubt between OWING and UNCLEAR, choose UNCLEAR — a wrong confident',
-    '"OWING" tells a parent who already paid that they still owe money.',
-    '',
-    'YOUR TASK: For every numbered student row return:',
-    '  name           = SURNAME + space + FIRSTNAME',
-    '  balance_bf     = col 4 value (integer, 0 if blank or dash)',
-    '  termFees       = col 5 value (integer)',
-    '  total          = col 6 value (integer)',
-    '  payment_status = one of "PAID", "PARTIAL", "OWING", "UNCLEAR" (see rules above)',
-    '  ocr_confidence  = "HIGH", "MEDIUM", or "LOW" — your confidence in this row overall',
-    '  detected_class = class label at the top of the page (e.g. K-G, BASIC FOUR, NURSERY 1, BASIC THREE)',
-    '  year           = year written at top of ledger (e.g. 2026)',
-    '  term           = term number at top of ledger (e.g. 3)',
-    '',
-    'Nigerian SURNAMES (common): OGUNDETI, OYERINDE, OLATUNDE, OBASA, OKENDINMI, ILELABOYE,',
-    'AFOLABI, OLIYIDE, KOLANDLE, ADEGUNLE, ADEOYE, SABIU, OGUNLADE, ALIMI, JOHN, AKINOLA,',
-    'KASALI, ALAWODE, OYESANWO, OGUNDEYI, ALAO, AKINWANDE, OLAWALE, ODEREYE, AKINBELE,',
-    'ADEBAYO, AYANDIYA, SHONIPE, GBELEKALE, FAFIOLU, DADA, MOSES, OYEBOLA, ADERIBIGBE,',
-    'LAWAL, OLAYINOLA, IDOWU, ATAJA, AWOLOWO, AKINDELE, OGUNSOLA',
-    '',
-    'Nigerian FIRSTNAMES (common): SALAM, OYEDEPO, WAJUD, MICHEAL, IBRAHIM, RAHMON, AISHAT,',
-    'CHRISTIANA, AFEEZ, DOMINION, SAMUEL, MALEEK, FATHIA, INIOLUWA, QUARIBAT, AWAL, GOLD,',
-    'TOHEEB, GODWIN, ELIZABETH, TIBESIMI, WASLAT, MOZEED, DEBORAH, SHINDARA, GABRIEL,',
-    'RASAQ, ENOCH, ABIGEAL, KOREDE, ADEMIDE, AMINDAT, WIQUYAT, ISREA, DORCAS, MARIAM,',
-    'CYNTHIA, AMINAT, FATOBI, MUSTEQEEM, GIFT, SUCCESS, RASHEEDAT, KOREDE',
-    '',
-    'RULES:',
-    '1. Every numbered row = one student. Read ALL rows. A page typically has 10-30 students.',
-    '2. Crossed-out numbers: ignore the crossed-out value, read the correction written nearby.',
-    '3. SELF-CHECK before finalizing each row: total must equal balance_bf + termFees.',
-    '   If they do not match, re-read that row\'s digits and correct before moving on.',
-    '4. Return ONLY valid JSON — no markdown fences, no explanation text.',
-    '',
-    'EXAMPLE OUTPUT:',
-    '{"detected_class":"K-G","year":"2026","term":"3","students":[',
-    '{"name":"OLIYIDE GODWIN","balance_bf":0,"termFees":24000,"total":24000,"payment_status":"PAID","ocr_confidence":"HIGH"},',
-    '{"name":"KASALI RASAQ","balance_bf":5000,"termFees":24000,"total":29000,"payment_status":"PARTIAL","ocr_confidence":"MEDIUM"},',
-    '{"name":"JOHN DEBORAH","balance_bf":3000,"termFees":26000,"total":29000,"payment_status":"UNCLEAR","ocr_confidence":"LOW"}',
-    ']}'
-  ].join('\n');
-
   allStudents=[];classGroups={};selDetectedClass='';selDetectedTerm='';selDetectedYear='';failedPages=[];
-
-  // Build cascade in priority order: PaddleOCR (Oracle VPS, coordinate-based
-  // column reading — free forever, structurally more reliable than vision-LLM
-  // guessing) tried first when configured. Direct Groq (qwen3.6-27b) next.
-  // HuggingFace last — works without a key, rate-limited but functional.
-  function buildCascade(imgUrl){
-    const cascade=[];
-    if(keys.ocrServiceUrl)cascade.push({name:'PaddleOCR (VPS)', fn:()=>callPaddleOCR(imgUrl,keys.ocrServiceUrl)});
-    if(keys.groq)cascade.push({name:'Groq', fn:()=>callGroqVision(imgUrl,LEDGER_PROMPT,keys.groq,4096)});
-    cascade.push({name:'HuggingFace', fn:()=>callHFVision(imgUrl,LEDGER_PROMPT,keys.hf||'')});
-    return cascade;
-  }
 
   await new Promise(r=>setTimeout(r,2000));
 
   for(let i=0;i<images.length;i++){
-    const[idx,url]=images[i];
-    const pageNum=parseInt(idx)+1;
+    const[idxKey]=images[i];
+    const pageNum=parseInt(idxKey)+1;
     prog.style.width=Math.round((i/images.length)*85)+'%';
 
     if(i>0){
@@ -462,114 +582,18 @@ async function processAllLedgers(){
       }
     }
 
-    status.textContent='Compressing page '+pageNum+'...';
-    let compressed;
-    try{compressed=await compressLedger(url);}
-    catch(e){console.warn('Compress failed:',e.message);compressed=url;}
+    const result=await processOnePage(idxKey,keys,status,images.length);
 
-    // Try each provider in cascade until one returns students
-    const cascade=buildCascade(compressed);
-    let pageStudents=[];
-    let pageClass='';
-    let succeeded=false;
-    const diagLog=[];   // diagnostic log — shown in UI on failure
-
-    for(const provider of cascade){
-      status.textContent='Page '+pageNum+'/'+images.length+' → '+provider.name+'...';
-      const diagEntry={provider:provider.name,students:0,error:'',raw:''};
-      try{
-        // 30-second timeout per provider — prevents hanging on slow/dead APIs
-        const rawText=await Promise.race([
-          provider.fn(),
-          new Promise((_,rej)=>setTimeout(()=>rej(new Error(provider.name+' timed out after 30s')),30000))
-        ]);
-        diagEntry.raw=rawText?rawText.slice(0,300):'(empty response)';
-        const result=parseLedgerJSON(rawText);
-        diagEntry.students=result.students.length;
-        if(result.students.length>0){
-          pageStudents=result.students;
-          pageClass=result.detected_class;
-          if(result.term)selDetectedTerm=String(result.term).trim();
-          if(result.year)selDetectedYear=String(result.year).trim();
-          diagEntry.ok=true;
-          diagLog.push(diagEntry);
-          console.log('[v2 Ledger] '+provider.name+' page '+pageNum+': '+pageStudents.length+' students');
-          succeeded=true;
-          break;
-        }
-        diagEntry.error='0 students extracted from response';
-        console.warn('[v2 Ledger] '+provider.name+': 0 students — trying next');
-      }catch(e){
-        diagEntry.error=e.message||'Unknown error';
-        console.warn('[v2 Ledger] '+provider.name+' error:',e.message);
-      }
-      diagLog.push(diagEntry);
-    }
-
-    if(!succeeded){
+    if(!result.succeeded){
       status.textContent='Page '+pageNum+': all providers returned 0 students';
       failedPages.push(pageNum);
-      // ── Show diagnostic screen ─────────────────────────────────────────
-      // diagnostic screen removed — agent only sees results
       await new Promise(r=>setTimeout(r,1500));
+      continue;
     }
 
-    if(pageClass){
-      const dc=String(pageClass).trim().toUpperCase();
-      if(dc&&dc!=='NULL'&&dc!=='UNKNOWN')selDetectedClass=dc;
-    }
-    // Extract term and year from OCR result
-    const rawResult=parseLedgerJSON._lastResult||{};
-    if(rawResult.term&&String(rawResult.term).trim())selDetectedTerm=String(rawResult.term).trim();
-    if(rawResult.year&&String(rawResult.year).trim())selDetectedYear=String(rawResult.year).trim();
-
-    // Deduplicate and merge into allStudents
-    const seenNames=new Set(allStudents.map(s=>s.name.toLowerCase().replace(/[^a-z]/g,'')));
-    pageStudents.forEach(s=>{
-      if(!s.name||s.name.length<2)return;
-      s.name=s.name.toUpperCase().replace(/[^A-Z\s'\-.]/g,'').replace(/\s+/g,' ').trim();
-      if(!s.name||s.name.length<2)return;
-      const key=s.name.toLowerCase().replace(/[^a-z]/g,'');
-      if(seenNames.has(key))return;
-      seenNames.add(key);
-      // Derive paid/status from the model's payment_status field. UNCLEAR
-      // (or a missing field, for backward compatibility with any provider
-      // still returning the old fully_paid boolean) becomes "NEEDS REVIEW"
-      // — a distinct state, never silently folded into OWING.
-      s.termFees = s.termFees||s.total||0;
-      s.balance  = s.balance_bf||s.balance||0;
-      s.total    = s.total||(s.termFees+s.balance);
-      const ps=String(s.payment_status||'').toUpperCase().trim();
-      if(ps==='PAID'||s.fully_paid===true){
-        s.paid   = s.paid||s.total;
-        s.status = 'FULLY PAID';
-      } else if(ps==='PARTIAL'){
-        s.paid   = s.paid||0;
-        s.status = 'PART PAID';
-      } else if(ps==='OWING'){
-        s.paid   = s.paid||0;
-        s.status = 'OWING';
-      } else {
-        // UNCLEAR, empty, or unrecognized value — flag for manual review
-        // rather than guessing. Never counted as OWING in totals below.
-        s.paid   = s.paid||0;
-        s.status = 'NEEDS REVIEW';
-      }
-      // Attach term/year detected from this page if available
-      if(!s.term&&selDetectedTerm)s.term=selDetectedTerm;
-      if(!s.year&&selDetectedYear)s.year=selDetectedYear;
-      s.class=s.class||selDetectedClass||'UNKNOWN';
-      s.confidence=calcConf(s);
-      allStudents.push(s);
-      addLiveItem(liveContent,s);
-    });
+    const added=mergePageIntoResults(result.students,result.pageClass,result.term,result.year);
+    added.forEach(s=>addLiveItem(liveContent,s));
   }
-
-  allStudents.forEach(s=>{
-    const cls=(s.class||selDetectedClass||'UNKNOWN').toUpperCase().trim();
-    if(!classGroups[cls])classGroups[cls]=[];
-    classGroups[cls].push(s);
-  });
 
   selTier=getTier(allStudents.length);
   prog.style.width='100%';
@@ -618,7 +642,9 @@ function showLedgerResults(){
     warn.style.cssText='background:rgba(220,38,38,.12);border:1px solid rgba(220,38,38,.35);margin-bottom:.65rem;';
     const pageList=failedPages.join(', ');
     warn.innerHTML='<div style="font-weight:800;color:#fca5a5;font-size:.85rem;">⚠️ Page'+(failedPages.length>1?'s':'')+' '+pageList+' could not be read</div>'
-      +'<div style="font-size:.76rem;color:#fecaca;margin-top:3px;">All OCR providers returned 0 students for '+(failedPages.length>1?'these pages':'this page')+'. Those students are NOT included below. Retake the photo'+(failedPages.length>1?'s':'')+' and tap "Read All Pages with AI" again, or add '+(failedPages.length>1?'them':'it')+' manually.</div>';
+      +'<div style="font-size:.76rem;color:#fecaca;margin-top:3px;">All OCR providers returned 0 students for '+(failedPages.length>1?'these pages':'this page')+'. Those students are NOT included below.</div>'
+      +'<button class="btn-p" style="margin-top:.5rem;width:100%;" onclick="retryFailedPages()">🔁 Retry just page'+(failedPages.length>1?'s':'')+' '+pageList+' (not the whole scan)</button>'
+      +'<div style="font-size:.7rem;color:#fecaca;margin-top:5px;opacity:.8;">If it still fails after retrying, retake the photo first, then retry — or add the students manually.</div>';
     groupsEl.appendChild(warn);
   }
   for(const[cls,students]of Object.entries(classGroups)){

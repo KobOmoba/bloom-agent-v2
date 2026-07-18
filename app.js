@@ -237,12 +237,6 @@ function markCaptured(id,url){
   el.appendChild(rb);
 }
 
-// ── Timeout wrapper — kills hanging API calls after N seconds ────────────
-function withTimeout(promise, ms, label){
-  const t = new Promise((_,reject)=>setTimeout(()=>reject(new Error(label+' timed out after '+Math.round(ms/1000)+'s')),ms));
-  return Promise.race([promise, t]);
-}
-
 async function processSignboard(file,dataUrl){
   $('sign-proc').style.display='block';
   const prog=$('sign-prog'),status=$('sign-status');
@@ -254,27 +248,23 @@ async function processSignboard(file,dataUrl){
 
     const prompt='You are reading a Nigerian school signboard photograph. Extract: school name, full address, LGA, state.\nReturn ONLY valid JSON — no markdown, no explanation:\n{"name":"SCHOOL NAME","address":"full address","lga":"LGA name","state":"State name"}\nUse empty string for anything unclear.';
 
-    // ── Cascade: Groq first (best for signboards), Together fallback ────────
+    // ── Groq only (proven, fast, free) ───────────────────────────────────
     const cascade=[];
-    if(keys.groq)    cascade.push({n:'Groq',        fn:()=>callGroqVision(compressed,prompt,keys.groq)});
-    if(keys.together)cascade.push({n:'Together AI', fn:()=>callTogetherVision(compressed,prompt,keys.together)});
-    if(keys.mistral) cascade.push({n:'Mistral',      fn:()=>callMistralVision(compressed,prompt,keys.mistral)});
-    cascade.push(    {n:'HuggingFace',              fn:()=>callHFVision(compressed,prompt,keys.hf||'')});
-
-    if(!cascade.length){throw new Error('No API keys found in Firestore admin_settings/main (groqApiKey)');}
+    if(keys.groq) cascade.push({n:'Groq', fn:()=>callGroqVision(compressed,prompt,keys.groq)});
+    if(!cascade.length){throw new Error('No Groq API key found in Firestore admin_settings/main');}
 
     let parsed={};
     for(const p of cascade){
       status.textContent='Reading signboard via '+p.n+'...';
       prog.style.width='50%';
       try{
-        const raw=await withTimeout(p.fn(), 25000, p.n);
+        const raw=await p.fn();
         const clean=raw.replace(/<think>[\s\S]*?<\/think>/gi,'').replace(/```json|```/g,'').trim();
         let tmp={};
         try{tmp=JSON.parse(clean);}
         catch(e){const m=clean.match(/\{[\s\S]*?\}/);if(m)try{tmp=JSON.parse(m[0]);}catch(e2){}}
         if(tmp.name&&tmp.name.length>2){parsed=tmp;console.log('[Signboard] '+p.n+' succeeded');break;}
-        console.warn('[Signboard] '+p.n+' returned no name, trying next...');
+        console.warn('[Signboard] '+p.n+' returned no name');
       }catch(e){
         console.warn('[Signboard] '+p.n+' failed:',e.message);
       }
@@ -294,9 +284,8 @@ async function processSignboard(file,dataUrl){
     setTimeout(()=>{$('sign-proc').style.display='none';$('school-fields').style.display='block';$('terms-card').style.display='block';$('btn-step1-next').style.display='block';},500);
   }catch(e){
     console.error('[Signboard] Fatal:',e.message);
-    alert('Signboard error: '+e.message);
     const prog=$('sign-prog'),status=$('sign-status');
-    if(status)status.textContent='⚠️ '+e.message+' — fill manually';
+    if(status)status.textContent='⚠️ Could not read signboard — fill manually';
     if(prog)prog.style.width='100%';
     setTimeout(()=>{$('sign-proc').style.display='none';$('school-fields').style.display='block';$('terms-card').style.display='block';$('btn-step1-next').style.display='block';},500);
   }
@@ -479,11 +468,8 @@ async function processAllLedgers(){
   function buildCascade(imgUrl){
     const cascade=[];
     if(keys.ocrServiceUrl)cascade.push({name:'PaddleOCR (VPS)', fn:()=>callPaddleOCR(imgUrl,keys.ocrServiceUrl)});
-    // Groq is PRIMARY — proven to work, 100% free, no credit card needed
-    if(keys.groq)    cascade.push({name:'Groq',          fn:()=>callGroqVision(imgUrl,LEDGER_PROMPT,keys.groq)});
-    if(keys.together)cascade.push({name:'Together AI',  fn:()=>callTogetherVision(imgUrl,LEDGER_PROMPT,keys.together)});
-    if(keys.anthropic)cascade.push({name:'Claude',       fn:()=>callClaudeVision(imgUrl,LEDGER_PROMPT,keys.anthropic)});
-    if(keys.mistral) cascade.push({name:'Mistral',        fn:()=>callMistralVision(imgUrl,LEDGER_PROMPT,keys.mistral)});
+    // Groq only — proven, fast, free
+    if(keys.groq)    cascade.push({name:'Groq', fn:()=>callGroqVision(imgUrl,LEDGER_PROMPT,keys.groq)});
     // HF is always last — works without a key (rate-limited but functional)
     cascade.push({name:'HuggingFace', fn:()=>callHFVision(imgUrl,LEDGER_PROMPT,keys.hf||'')});
     return cascade;
@@ -1135,33 +1121,8 @@ async function uploadToStorageTemp(base64,mimeType){
 }
 
 async function callTogetherVision(imageDataUrl,prompt,apiKey){
-  if(!apiKey)throw new Error('No Together key');
-  // Send base64 directly — no Firebase Storage upload needed (avoids mobile hang)
-  const ctrl2=new AbortController();
-  const killTimer2=setTimeout(()=>ctrl2.abort(),22000);
-  const resp=await fetch('https://api.together.xyz/v1/chat/completions',{
-    method:'POST',signal:ctrl2.signal,
-    headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
-    body:JSON.stringify({
-      model:'meta-llama/Llama-Vision-Free',
-      max_tokens:3000,temperature:0.1,
-      messages:[{role:'user',content:[
-        {type:'image_url',image_url:{url:imageDataUrl}},
-        {type:'text',text:prompt}
-      ]}]
-    })
-  });
-  clearTimeout(killTimer2);
-  if(!resp.ok){
-    const err=await resp.json().catch(()=>({}));
-    const msg=err.error?.message||JSON.stringify(err)||'Together '+resp.status;
-    console.error('[Together] HTTP '+resp.status+':',msg);
-    throw new Error(msg);
-  }
-  const data=await resp.json();
-  const text=(data.choices?.[0]?.message?.content||'').trim();
-  console.log('[Together] Raw response ('+text.length+' chars):',text.slice(0,300));
-  return text;
+  // Together AI disabled — Groq handles all OCR
+  throw new Error('Together AI disabled');
 }
 
 // ── HuggingFace — Qwen2.5-VL-7B-Instruct ────────────────────────────────
@@ -1230,36 +1191,31 @@ async function callPaddleOCR(imageDataUrl,serviceUrl){
 async function callGroqVision(imageDataUrl,prompt,apiKey){
   const base64=imageDataUrl.split(',')[1];
   const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
-  // Use Groq's vision-capable models in order of preference
-  const visionModels=['meta-llama/llama-4-maverick-17b-128e-instruct','meta-llama/llama-4-scout-17b-16e-instruct','llama-3.2-90b-vision-preview'];
+  const visionModels=['meta-llama/llama-4-scout-17b-16e-instruct','meta-llama/llama-4-maverick-17b-128e-instruct','llama-3.2-90b-vision-preview'];
   let lastErr='';
   for(const model of visionModels){
     try{
-      const ctrl=new AbortController();
-      const killTimer=setTimeout(()=>ctrl.abort(),22000);
       const resp=await fetch('https://api.groq.com/openai/v1/chat/completions',{
-        method:'POST',signal:ctrl.signal,
+        method:'POST',
         headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
         body:JSON.stringify({
-          model,
-          max_tokens:3000,temperature:0.1,
+          model,max_tokens:3000,temperature:0.1,
           messages:[{role:'user',content:[
             {type:'image_url',image_url:{url:'data:'+mimeType+';base64,'+base64}},
             {type:'text',text:prompt}
           ]}]
         })
       });
-      clearTimeout(killTimer);
-      if(resp.status===400){const e=await resp.json().catch(()=>({}));lastErr=e.error?.message||'400';console.warn('[Groq vision] '+model+' failed:',lastErr);continue;}
+      if(resp.status===400){const e=await resp.json().catch(()=>({}));lastErr=e.error?.message||'400';console.warn('[Groq] '+model+' 400:',lastErr);continue;}
       if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'Groq '+resp.status);}
       const data=await resp.json();
       let text=data.choices?.[0]?.message?.content||'';
-      // Strip ildo reasoning tags if model injects them
       text=text.replace(/<ildo>[\s\S]*?<\/ildo>/gi,'').replace(/<think>[\s\S]*?<\/think>/gi,'').trim();
+      console.log('[Groq] '+model+' responded ('+text.length+' chars)');
       return text;
-    }catch(e){lastErr=e.message;console.warn('[Groq vision] '+model+' error:',e.message);}
+    }catch(e){lastErr=e.message;console.warn('[Groq] '+model+' error:',e.message);}
   }
-  throw new Error('All Groq vision models failed: '+lastErr);
+  throw new Error('Groq failed: '+lastErr);
 }
 
 function fileToDataUrl(file){

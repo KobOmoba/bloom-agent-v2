@@ -104,6 +104,25 @@ bloom-agent-v2/
 
 ## 📜 Change History (newest first)
 
+### 2026-07-18 — First real field test (Future Promise Comprehensive College) — 2 bugs found + fixed
+- **First live test result:** signboard OCR, ledger scan (8 students, Basic 1 & 2),
+  auto-tier selection, and deal submission all worked end-to-end on a real
+  device in ~2 minutes onboarding time. First confirmation the crop fix +
+  qwen3.6-27b direct call actually works on a real handwritten ledger.
+- **Bug found — student count varied between runs (10 vs 8) on the same page:**
+  `callGroqVision` had `temperature:0.2`, allowing small non-determinism.
+  For financial ledger reading we want zero creativity — same photo should
+  always produce the same result. Changed to `temperature:0`.
+- **Bug found — "Show Principal" fullscreen pitch screen looked blank:**
+  Not actually blank — `body.presenting` sets the background to solid black,
+  but `#sec-step3`'s content (hero card + one class bar) only fills the top
+  portion of the screen with no height/centering rule, leaving a large empty
+  black area below it that read as a crash to whoever's holding the phone.
+  Fixed: `#sec-step3` now gets `min-height:100vh` + flex-centered content
+  while presenting.
+- **Deployed:** cache bumped to `?v=11`.
+- **Found and fixed by:** Claude (Anthropic), via GitHub API push.
+
 ### 2026-07-18 — Base44 proxy removed, 227 lines of dead code deleted, ledger prompt hardened
 - **Base44 proxy eliminated:** `callGroqVisionProxy()`, `GROQ_PROXY_URL`, and
   `CLAUDE_PROXY_URL` removed entirely. Ledger OCR now calls Groq directly via
@@ -235,6 +254,7 @@ bloom-agent-v2/
 ---
 
 *This document is maintained by Koda (Base44 Superagent). Updated before every build.*
+
 
 
 

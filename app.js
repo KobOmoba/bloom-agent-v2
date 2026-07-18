@@ -245,7 +245,7 @@ async function processSignboard(file,dataUrl){
 
     // ── Groq only (proven, fast, free) ───────────────────────────────────
     const cascade=[];
-    if(keys.groq) cascade.push({n:'Groq', fn:()=>callGroqVision(compressed,prompt,keys.groq)});
+    if(keys.groq) cascade.push({n:'Groq', fn:()=>callGroqVision(compressed,prompt,keys.groq,500)});
     if(!cascade.length){throw new Error('No Groq API key found in Firestore admin_settings/main');}
 
     let parsed={};
@@ -405,7 +405,7 @@ async function processAllLedgers(){
   function buildCascade(imgUrl){
     const cascade=[];
     if(keys.ocrServiceUrl)cascade.push({name:'PaddleOCR (VPS)', fn:()=>callPaddleOCR(imgUrl,keys.ocrServiceUrl)});
-    if(keys.groq)cascade.push({name:'Groq', fn:()=>callGroqVision(imgUrl,LEDGER_PROMPT,keys.groq)});
+    if(keys.groq)cascade.push({name:'Groq', fn:()=>callGroqVision(imgUrl,LEDGER_PROMPT,keys.groq,4096)});
     cascade.push({name:'HuggingFace', fn:()=>callHFVision(imgUrl,LEDGER_PROMPT,keys.hf||'')});
     return cascade;
   }
@@ -890,11 +890,23 @@ function parseLedgerJSON(text){
     const m=text.match(/\{[\s\S]*\}/);
     try{parsed=m?JSON.parse(m[0]):{};}catch(e2){parsed={};}
   }
+  let students=Array.isArray(parsed.students)?parsed.students:[];
+  // Safety net: if the whole-JSON parse produced nothing (e.g. the response
+  // got cut off mid-array because it hit the token limit), salvage whatever
+  // complete {..."name":...} objects exist in the raw text rather than
+  // losing every student on that page.
+  if(!students.length){
+    const objMatches=text.match(/\{[^{}]*"name"[^{}]*\}/g)||[];
+    objMatches.forEach(m=>{
+      try{const o=JSON.parse(m);if(o&&o.name)students.push(o);}catch(e){}
+    });
+    if(students.length)console.warn('[parseLedgerJSON] Recovered '+students.length+' students from truncated/invalid JSON');
+  }
   const result={
     detected_class:parsed.detected_class||'',
     term:parsed.term||'',
     year:parsed.year||'',
-    students:Array.isArray(parsed.students)?parsed.students:[]
+    students
   };
   parseLedgerJSON._lastResult=result;
   return result;
@@ -965,8 +977,9 @@ async function callPaddleOCR(imageDataUrl,serviceUrl){
 
 
 
-async function callGroqVision(imageDataUrl,prompt,apiKey,_retry){
+async function callGroqVision(imageDataUrl,prompt,apiKey,maxTokens,_retry){
   if(_retry===undefined)_retry=0;
+  if(!maxTokens)maxTokens=600;
   const base64=imageDataUrl.split(',')[1];
   const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
   // qwen/qwen3.6-27b is the current reliable free-tier Groq vision model.
@@ -988,7 +1001,7 @@ async function callGroqVision(imageDataUrl,prompt,apiKey,_retry){
           {type:'text',text:prompt}
         ]}],
         temperature:0,
-        max_tokens:600,
+        max_tokens:maxTokens,
         reasoning_effort:'none',
         response_format:{type:'json_object'}
       })
@@ -998,20 +1011,20 @@ async function callGroqVision(imageDataUrl,prompt,apiKey,_retry){
     clearTimeout(fetchTimer);
     if(_retry<2){
       await new Promise(r=>setTimeout(r,1500));
-      return callGroqVision(imageDataUrl,prompt,apiKey,_retry+1);
+      return callGroqVision(imageDataUrl,prompt,apiKey,maxTokens,_retry+1);
     }
     throw new Error(fetchErr.name==='AbortError'?'Groq timed out':fetchErr.message);
   }
   if(resp.status===429||resp.status===503||resp.status===529){
     if(_retry>=2){const e=await resp.json().catch(()=>({}));throw new Error((e.error&&e.error.message)||'Groq unavailable');}
     await new Promise(r=>setTimeout(r,3000));
-    return callGroqVision(imageDataUrl,prompt,apiKey,_retry+1);
+    return callGroqVision(imageDataUrl,prompt,apiKey,maxTokens,_retry+1);
   }
   if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error((e.error&&e.error.message)||'Groq '+resp.status);}
   const data=await resp.json();
   let text=data.choices?.[0]?.message?.content||'';
   text=text.replace(/<ildo>[\s\S]*?<\/ildo>/gi,'').replace(/<think>[\s\S]*?<\/think>/gi,'').trim();
-  console.log('[Groq] '+model+' responded ('+text.length+' chars)');
+  console.log('[Groq] '+model+' responded ('+text.length+' chars, budget '+maxTokens+')');
   return text;
 }
 

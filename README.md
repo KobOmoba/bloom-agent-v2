@@ -104,6 +104,33 @@ bloom-agent-v2/
 
 ## 📜 Change History (newest first)
 
+### 2026-07-18 — CRITICAL FIX: ledger OCR silently truncating large pages
+- **5-page real field test (Future Promise Comprehensive College):** ground
+  truth manually counted from the actual ledger photos was ~62-65 students
+  across 5 pages (Basic 4&5: 7, Basic 3: 7, Basic 1&2: 11, Nursery+Creche:
+  ~15, K-G: ~25). The app returned only 32 total.
+- **The pattern was the giveaway:** both 7-row pages (Basic 4&5, Basic 3)
+  came back 100% correct. The two pages with far more rows (Nursery: 8 of
+  ~15, K-G: 10 of ~25) both came back roughly cut in half. That is not a
+  reading-quality signature — that is a **cutoff** signature.
+- **Root cause:** `callGroqVision()` had `max_tokens:600` hardcoded and
+  shared between signboard (needs ~4 short fields, 600 is fine) and ledger
+  (needs one JSON object per student — 25-30 students blows past 600 tokens
+  and the response gets cut off mid-array). Every row after the cutoff
+  point was silently lost with no error shown.
+- **Fix:** `callGroqVision()` now takes a `maxTokens` parameter. Signboard
+  passes `500` (unchanged behavior). Ledger passes `4096` (enough headroom
+  for 100+ students per page — no realistic photographed page should hit
+  this ceiling).
+- **Also added:** a partial-recovery fallback in `parseLedgerJSON()` — if a
+  future truncation still happens (freak huge page), the app now salvages
+  whatever complete student objects exist in the raw text instead of
+  returning zero students for the whole page.
+- **Deployed:** cache bumped to `?v=12`.
+- **Not yet re-tested on device** — next test should re-scan the same
+  5-page ledger and confirm totals land at ~62-65 instead of 32.
+- **Found and fixed by:** Claude (Anthropic), via GitHub API push.
+
 ### 2026-07-18 — First real field test (Future Promise Comprehensive College) — 2 bugs found + fixed
 - **First live test result:** signboard OCR, ledger scan (8 students, Basic 1 & 2),
   auto-tier selection, and deal submission all worked end-to-end on a real
@@ -254,6 +281,7 @@ bloom-agent-v2/
 ---
 
 *This document is maintained by Koda (Base44 Superagent). Updated before every build.*
+
 
 
 

@@ -114,7 +114,7 @@ body.presenting .hdr,body.presenting .step-bar,body.presenting #sec-step1,body.p
 body.presenting #present-exit{display:block;}
 body.presenting{background:#000;}
 body.presenting #app{background:#000;}
-body.presenting #sec-step3{background:var(--bg);}
+body.presenting #sec-step3{background:var(--bg);min-height:100vh;display:flex;flex-direction:column;justify-content:center;}
 /* REVIEW */
 .rv-row{display:flex;justify-content:space-between;align-items:center;padding:.5rem 0;border-bottom:1px solid var(--border);font-size:.83rem;}
 .rv-row:last-child{border-bottom:none;}
@@ -392,7 +392,7 @@ input[list]::-webkit-calendar-picker-indicator{opacity:0;}
 
 <button id="present-exit" onclick="togglePresent()">✕ Exit</button>
 
-<script src="app.js?v=10"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>
 

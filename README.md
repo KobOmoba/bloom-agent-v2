@@ -104,6 +104,21 @@ bloom-agent-v2/
 
 ## 📜 Change History (newest first)
 
+### 2026-07-18 — CRITICAL FIX: app.js syntax error blocked ALL logins
+- **Problem:** The "remove debug panels" edit left a stray `].join('');` inside
+  `showDeepSeekKeyPrompt()` (line 344) with no matching array — a hard
+  JavaScript syntax error. This broke parsing of the ENTIRE `app.js` file,
+  so no function (including `doLogin`) was ever defined. Every button in
+  the app, including Login, silently did nothing.
+- **Fix:** Removed the orphaned `].join('');` line. Verified with `node -c`
+  that the file now parses cleanly.
+- **Deployed:** `app.js` fixed + `index.html` cache-bust bumped to `?v=8`
+  so cached broken copies on agents' phones get replaced.
+- **Found and fixed by:** Claude (Anthropic), via GitHub API push — not Koda.
+- **Lesson:** Any edit that removes a block of code must be checked for
+  matching braces/brackets before commit. A `node -c app.js` syntax check
+  should run before every deploy going forward.
+
 ### 2026-07-18 — OCR on all manual fields + remove debug panels
 - **Requirement:** Agent should ONLY see success results — no error dumps, no debug text
 - **Fix 1:** Remove `ocr-debug` panel entirely from app
@@ -162,3 +177,4 @@ bloom-agent-v2/
 ---
 
 *This document is maintained by Koda (Base44 Superagent). Updated before every build.*
+

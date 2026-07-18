@@ -220,23 +220,11 @@ input[list]::-webkit-calendar-picker-indicator{opacity:0;}
           <div class="ct">📋 School Details</div>
           <div class="ai-hint" id="ai-hint-sign"></div>
           <label>School Name *</label>
-          <div class="field-row">
-            <input id="f-school-name" placeholder="e.g. GRACELAND SCHOOLS" autocomplete="off">
-            <button class="ocr-field-btn" onclick="scanField('f-school-name','school name')" title="Scan to fill">📷</button>
-            <input type="file" accept="image/*" id="ffi-f-school-name" style="display:none">
-          </div>
+          <input id="f-school-name" placeholder="e.g. GRACELAND SCHOOLS" autocomplete="off">
           <label>Address</label>
-          <div class="field-row">
-            <input id="f-address" placeholder="e.g. 12 Akin Street, Abeokuta">
-            <button class="ocr-field-btn" onclick="scanField('f-address','street address')" title="Scan to fill">📷</button>
-            <input type="file" accept="image/*" id="ffi-f-address" style="display:none">
-          </div>
+          <input id="f-address" placeholder="e.g. 12 Akin Street, Abeokuta">
           <label>State *</label>
-          <div class="field-row">
-            <input id="f-state" placeholder="e.g. Ogun" list="states-list">
-            <button class="ocr-field-btn" onclick="scanField('f-state','state name in Nigeria')" title="Scan to fill">📷</button>
-            <input type="file" accept="image/*" id="ffi-f-state" style="display:none">
-          </div>
+          <input id="f-state" placeholder="e.g. Ogun" list="states-list">
           <datalist id="states-list">
             <option>Abia</option><option>Adamawa</option><option>Akwa Ibom</option><option>Anambra</option><option>Bauchi</option>
             <option>Bayelsa</option><option>Benue</option><option>Borno</option><option>Cross River</option><option>Delta</option>
@@ -248,29 +236,13 @@ input[list]::-webkit-calendar-picker-indicator{opacity:0;}
             <option>Zamfara</option><option>FCT</option>
           </datalist>
           <label>LGA</label>
-          <div class="field-row">
-            <input id="f-lga" placeholder="e.g. Abeokuta South">
-            <button class="ocr-field-btn" onclick="scanField('f-lga','local government area LGA')" title="Scan to fill">📷</button>
-            <input type="file" accept="image/*" id="ffi-f-lga" style="display:none">
-          </div>
+          <input id="f-lga" placeholder="e.g. Abeokuta South">
           <label>Principal Name *</label>
-          <div class="field-row">
-            <input id="f-principal" placeholder="e.g. Mr. James Adeyemi">
-            <button class="ocr-field-btn" onclick="scanField('f-principal','person full name')" title="Scan to fill">📷</button>
-            <input type="file" accept="image/*" id="ffi-f-principal" style="display:none">
-          </div>
+          <input id="f-principal" placeholder="e.g. Mr. James Adeyemi">
           <label>Principal WhatsApp *</label>
-          <div class="field-row">
-            <input id="f-phone" type="tel" placeholder="e.g. 08012345678">
-            <button class="ocr-field-btn" onclick="scanField('f-phone','Nigerian phone number')" title="Scan to fill">📷</button>
-            <input type="file" accept="image/*" id="ffi-f-phone" style="display:none">
-          </div>
+          <input id="f-phone" type="tel" placeholder="e.g. 08012345678">
           <label>Email (optional)</label>
-          <div class="field-row">
-            <input id="f-email" type="email" placeholder="admin@school.ng">
-            <button class="ocr-field-btn" onclick="scanField('f-email','email address')" title="Scan to fill">📷</button>
-            <input type="file" accept="image/*" id="ffi-f-email" style="display:none">
-          </div>
+          <input id="f-email" type="email" placeholder="admin@school.ng">
         </div>
 
         <div class="card" id="terms-card" style="display:none;">
@@ -420,7 +392,7 @@ input[list]::-webkit-calendar-picker-indicator{opacity:0;}
 
 <button id="present-exit" onclick="togglePresent()">✕ Exit</button>
 
-<script src="app.js?v=8"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>
 

@@ -456,7 +456,7 @@ async function processAllLedgers(){
     prog.style.width=Math.round((i/images.length)*85)+'%';
 
     if(i>0){
-      for(let s=15;s>0;s--){
+      for(let s=20;s>0;s--){
         status.textContent='Cooldown ('+s+'s) before page '+pageNum+'...';
         await new Promise(r=>setTimeout(r,1000));
       }
@@ -1097,8 +1097,21 @@ async function callGroqVision(imageDataUrl,prompt,apiKey,maxTokens,_retry){
     throw new Error(fetchErr.name==='AbortError'?'Groq timed out':fetchErr.message);
   }
   if(resp.status===429||resp.status===503||resp.status===529){
-    if(_retry>=2){const e=await resp.json().catch(()=>({}));throw new Error((e.error&&e.error.message)||'Groq unavailable');}
-    await new Promise(r=>setTimeout(r,3000));
+    // A fixed 3s backoff was nowhere near long enough — Groq's free-tier
+    // rate limit is a rolling per-MINUTE window, not a per-few-seconds one.
+    // That mismatch is what caused a different random page to fail on every
+    // run of the same 5 photos: whichever page happened to land right as
+    // the TPM budget ran out got a 429, retried for only ~6 seconds total,
+    // then gave up. Respect the server's own Retry-After header — it knows
+    // exactly how long is left in the window — and allow more attempts
+    // since this is a fully recoverable, expected condition, not an error.
+    const retryAfterHeader=resp.headers.get('retry-after');
+    let waitMs=parseFloat(retryAfterHeader)*1000;
+    if(!waitMs||isNaN(waitMs))waitMs=20000; // no header given — assume a full window
+    waitMs=Math.min(Math.max(waitMs,3000),65000); // clamp 3s-65s
+    if(_retry>=4){const e=await resp.json().catch(()=>({}));throw new Error((e.error&&e.error.message)||'Groq rate-limited after multiple retries');}
+    console.warn('[Groq] rate-limited (attempt '+(_retry+1)+'), waiting '+Math.round(waitMs/1000)+'s per Retry-After');
+    await new Promise(r=>setTimeout(r,waitMs));
     return callGroqVision(imageDataUrl,prompt,apiKey,maxTokens,_retry+1);
   }
   if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error((e.error&&e.error.message)||'Groq '+resp.status);}

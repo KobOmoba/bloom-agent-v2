@@ -341,7 +341,6 @@ function showDeepSeekKeyPrompt(){
   const stats = $('as-total');
   if(stats){ $('as-total').textContent='—';$('as-classes').textContent='—';$('as-conf').textContent='—';}
   // debug panel removed — agent only sees success
-  ].join('');
 }
 
 async function saveDeepSeekKey(){

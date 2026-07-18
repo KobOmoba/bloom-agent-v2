@@ -104,6 +104,42 @@ bloom-agent-v2/
 
 ## 📜 Change History (newest first)
 
+### 2026-07-18 — Base44 proxy removed, 227 lines of dead code deleted, ledger prompt hardened
+- **Base44 proxy eliminated:** `callGroqVisionProxy()`, `GROQ_PROXY_URL`, and
+  `CLAUDE_PROXY_URL` removed entirely. Ledger OCR now calls Groq directly via
+  the same `callGroqVision()` used by signboard (`qwen/qwen3.6-27b`, proven
+  config, 45s timeout + retry). The proxy was a black box on Base44's platform
+  (not in this GitHub repo) — its actual server-side model config couldn't be
+  verified or fixed, and per this same changelog it was likely running the
+  same dead Llama-4-Scout/Maverick models that broke signboard. Direct calls
+  put full control back in this repo.
+- **Ledger crop fix restored:** `compressLedger()` was cropping the full page
+  again despite a comment claiming otherwise (see 2026-07-18 entry below —
+  this was the actual root cause of "why can't qwen read a ledger"). Left-50%
+  crop restored; `LEDGER_PROMPT` simplified back to 6 core columns +
+  `fully_paid` boolean, matching what survives the crop.
+- **Ledger prompt hardened:** added digit-by-digit reading instruction and a
+  self-consistency check (`total == balance_bf + termFees`) per a code-review
+  suggestion — misread digits (7 vs 1, 0 vs 6) were silently producing wrong
+  totals with no visible error.
+- **Dead code removed (227 lines):** `callGeminiVision`, `callMistralVision`,
+  `callClaudeVision`, `callTogetherVision`, `uploadToStorageTemp`,
+  `callGroqText`, `fallbackExtract` — none were reachable from any cascade.
+  Also removed an orphaned DeepSeek-manual-key-entry subsystem
+  (`showDeepSeekKeyPrompt`, `saveDeepSeekKey`, `clearDsKeyAndRetry`,
+  `retryLedger`, `_dsKey`) that had no HTML hooks left after the debug panel
+  was removed — 100% unreachable. `_getApiKeys()` simplified to only fetch
+  `groq`/`hf`/`ocrServiceUrl` since Mistral/Together/Anthropic keys are no
+  longer used anywhere.
+- **Model note:** confirmed via Groq's own deprecation page — Llama 4 Scout
+  was deprecated **2026-07-17** (one day before this fix), Llama 4 Maverick
+  03/09/26. `qwen/qwen3.6-27b` is Groq's official recommended replacement and
+  is currently the best vision model available on free/developer tier.
+  `qwen/qwen3-vl-32b-instruct` (32B, newer) exists but is Enterprise-only —
+  not reachable on this account.
+- **Deployed:** cache bumped to `?v=10`.
+- **Found and fixed by:** Claude (Anthropic), via GitHub API push.
+
 ### 2026-07-18 — Signboard OCR fixed (was using dead models) + per-field scan removed
 - **Problem:** `callGroqVision()` (used by the signboard step) tried three
   deprecated models — `llama-4-scout-17b`, `llama-4-maverick-17b`,
@@ -199,5 +235,6 @@ bloom-agent-v2/
 ---
 
 *This document is maintained by Koda (Base44 Superagent). Updated before every build.*
+
 
 

@@ -1138,38 +1138,7 @@ async function callPaddleOCR(imageDataUrl,serviceUrl){
 
 
 
-// ── OCR for individual form fields ─────────────────────────────────────────
-function scanField(fieldId, fieldHint) {
-  const fileInput = document.getElementById('ffi-' + fieldId);
-  if (!fileInput) return;
-  fileInput.onchange = async (e) => {
-    const file = e.target.files[0];
-    fileInput.value = '';
-    if (!file) return;
-    const btn = document.querySelector('[onclick="scanField(\''+fieldId+'\',\''+fieldHint+'\')"]');
-    if (btn) { btn.textContent = '⏳'; btn.classList.add('ocr-scanning'); }
-    try {
-      const imageDataUrl = await fileToDataUrl(file);
-      const compressed = await compressImage(imageDataUrl, 1200, 0.82);
-      const keys = await _getApiKeys();
-      if (!keys.groq) throw new Error('No Groq key');
-      const prompt = 'Read this image and extract ONLY the ' + fieldHint + '. Return ONLY the raw text value — no explanation, no JSON, no labels. Just the value itself.';
-      const text = await callGroqVisionProxy(compressed, prompt, keys.groq);
-      // Clean up: strip think/ildo tags, trim whitespace
-      const clean = text.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<ildo>[\s\S]*?<\/ildo>/gi, '').trim();
-      if (clean) {
-        const el = document.getElementById(fieldId);
-        if (el) { el.value = clean; el.focus(); }
-      }
-    } catch (e) {
-      console.warn('[scanField] ' + fieldId + ' error:', e.message);
-      // Silent fail — field just stays empty for manual entry
-    } finally {
-      if (btn) { btn.textContent = '📷'; btn.classList.remove('ocr-scanning'); }
-    }
-  };
-  fileInput.click();
-}
+// ── Per-field OCR removed 2026-07-18 — signboard step fills all fields at once ──
 
 // ── Groq Vision — Via Base44 proxy (avoids mobile network / CORS issues) ──
 async function callGroqVisionProxy(imageDataUrl, prompt, apiKey) {
@@ -1191,34 +1160,54 @@ async function callGroqVisionProxy(imageDataUrl, prompt, apiKey) {
   return text;
 }
 
-async function callGroqVision(imageDataUrl,prompt,apiKey){
+async function callGroqVision(imageDataUrl,prompt,apiKey,_retry){
+  if(_retry===undefined)_retry=0;
   const base64=imageDataUrl.split(',')[1];
   const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
-  const visionModels=['meta-llama/llama-4-scout-17b-16e-instruct','meta-llama/llama-4-maverick-17b-128e-instruct','llama-3.2-90b-vision-preview'];
-  let lastErr='';
-  for(const model of visionModels){
-    try{
-      const resp=await fetch('https://api.groq.com/openai/v1/chat/completions',{
-        method:'POST',
-        headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
-        body:JSON.stringify({
-          model,max_tokens:3000,temperature:0.1,
-          messages:[{role:'user',content:[
-            {type:'image_url',image_url:{url:'data:'+mimeType+';base64,'+base64}},
-            {type:'text',text:prompt}
-          ]}]
-        })
-      });
-      if(resp.status===400){const e=await resp.json().catch(()=>({}));lastErr=e.error?.message||'400';console.warn('[Groq] '+model+' 400:',lastErr);continue;}
-      if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'Groq '+resp.status);}
-      const data=await resp.json();
-      let text=data.choices?.[0]?.message?.content||'';
-      text=text.replace(/<ildo>[\s\S]*?<\/ildo>/gi,'').replace(/<think>[\s\S]*?<\/think>/gi,'').trim();
-      console.log('[Groq] '+model+' responded ('+text.length+' chars)');
-      return text;
-    }catch(e){lastErr=e.message;console.warn('[Groq] '+model+' error:',e.message);}
+  // qwen/qwen3.6-27b is the current reliable free-tier Groq vision model.
+  // llama-4-scout / llama-4-maverick / llama-3.2-90b-vision-preview are deprecated
+  // and return 400s — this was why signboard OCR stopped working.
+  const model='qwen/qwen3.6-27b';
+  const controller=new AbortController();
+  const fetchTimer=setTimeout(()=>controller.abort(),45000);
+  let resp;
+  try{
+    resp=await fetch('https://api.groq.com/openai/v1/chat/completions',{
+      method:'POST',
+      signal:controller.signal,
+      headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model,
+        messages:[{role:'user',content:[
+          {type:'image_url',image_url:{url:'data:'+mimeType+';base64,'+base64}},
+          {type:'text',text:prompt}
+        ]}],
+        temperature:0.2,
+        max_tokens:600,
+        reasoning_effort:'none',
+        response_format:{type:'json_object'}
+      })
+    });
+    clearTimeout(fetchTimer);
+  }catch(fetchErr){
+    clearTimeout(fetchTimer);
+    if(_retry<2){
+      await new Promise(r=>setTimeout(r,1500));
+      return callGroqVision(imageDataUrl,prompt,apiKey,_retry+1);
+    }
+    throw new Error(fetchErr.name==='AbortError'?'Groq timed out':fetchErr.message);
   }
-  throw new Error('Groq failed: '+lastErr);
+  if(resp.status===429||resp.status===503||resp.status===529){
+    if(_retry>=2){const e=await resp.json().catch(()=>({}));throw new Error((e.error&&e.error.message)||'Groq unavailable');}
+    await new Promise(r=>setTimeout(r,3000));
+    return callGroqVision(imageDataUrl,prompt,apiKey,_retry+1);
+  }
+  if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error((e.error&&e.error.message)||'Groq '+resp.status);}
+  const data=await resp.json();
+  let text=data.choices?.[0]?.message?.content||'';
+  text=text.replace(/<ildo>[\s\S]*?<\/ildo>/gi,'').replace(/<think>[\s\S]*?<\/think>/gi,'').trim();
+  console.log('[Groq] '+model+' responded ('+text.length+' chars)');
+  return text;
 }
 
 function fileToDataUrl(file){

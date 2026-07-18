@@ -104,6 +104,40 @@ bloom-agent-v2/
 
 ## 📜 Change History (newest first)
 
+### 2026-07-18 — FIX: random page failures across repeated runs on identical photos
+- **Bayo's report:** same 5 ledger photos, run 3 separate times (2x
+  incognito, 1x normal browser) — 3 different total student counts, and a
+  *different, seemingly random* page failed each time. Not the same page
+  twice. This ruled out an image-quality problem (that would fail the same
+  page consistently) and pointed straight at rate limiting.
+- **Good news first:** payment status detection now clearly working —
+  this run showed a real mix of PART PAID / FULLY PAID / NEEDS REVIEW
+  instead of everyone defaulting to OWING, and the failed-page warning
+  banner (yesterday's fix) correctly named pages 3 and 5.
+- **Root cause:** `callGroqVision()`'s 429/503/529 retry only waited a
+  fixed 3 seconds before retrying, for a maximum of 2 retries (~6 seconds
+  total). Groq's free-tier rate limit is a rolling **per-minute** token
+  budget — 6 seconds is nowhere near long enough for that window to clear.
+  Whichever page happened to land right as the budget ran out got a 429,
+  retried too briefly, gave up, and fell through to HuggingFace (which
+  likely also failed or wasn't configured). Because the exact page that
+  crosses the token threshold depends on cumulative usage and timing, a
+  different page "randomly" failed on each run — that's the signature of
+  a race against a shared rate-limit window, not a code bug tied to a
+  specific image.
+- **Fix:** `callGroqVision()` now reads the `Retry-After` response header
+  and waits exactly that long (clamped 3s-65s) instead of guessing 3s.
+  Falls back to a 20s assumption only if the header is missing. Retry
+  budget for rate-limit responses raised to 4 attempts (was 2), since this
+  is a fully recoverable, expected condition — not a real error. Inter-page
+  cooldown bumped 15s -> 20s as extra headroom.
+- **Deployed:** cache bumped to `?v=15`.
+- **Not yet re-tested** — next test should run the same 5 pages 2-3 times
+  in a row and confirm the SAME total comes back every time, not just a
+  higher one.
+- **Found by:** Bayo, from running the same test 3 times and comparing
+  results. Root cause and fix by Claude (Anthropic).
+
 ### 2026-07-18 — FIX: payment status defaulting to OWING for everyone (₦928,000 false-owing bug)
 - **Bug report (external code review, cross-checked against the actual
   32-student test run):** every student was tagged OWING regardless of
@@ -345,6 +379,7 @@ bloom-agent-v2/
 ---
 
 *This document is maintained by Koda (Base44 Superagent). Updated before every build.*
+
 
 
 

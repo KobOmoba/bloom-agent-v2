@@ -9,7 +9,6 @@ try{
 
 // ── State ──────────────────────────────────────────────────────────────────
 let agent=null,apiKeys=null,currentTab='wizard';
-let _dsKey='';  // DeepSeek-OCR key (optional)
 let selDetectedClass='';  // class detected from ledger header
 let timerSec=0,timerInterval=null;
 let ledgerPageCount=1,ledgerImages={};
@@ -159,25 +158,21 @@ function logout(){if(!confirm('Logout?'))return;localStorage.removeItem('ag2_age
 // ── API Keys ───────────────────────────────────────────────────────────────
 async function _getApiKeys(){
   if(apiKeys)return apiKeys;
-  let fsGroq='',fsMistral='',fsTogether='',fsHF='',fsOcrUrl='',fsAnthropic='';
+  let fsGroq='',fsHF='',fsOcrUrl='';
   if(db){
     try{
       const doc=await db.collection('admin_settings').doc('main').get();
       if(doc.exists){
         const d=doc.data();
-        fsGroq     = d.groqApiKey    ||'';
-        fsAnthropic= d.anthropicApiKey||'';
-        fsMistral  = d.mistralApiKey ||'';
-        fsTogether = d.togetherApiKey||'';
-        fsHF       = d.hfApiKey      ||'';
-        // Oracle VPS PaddleOCR service — set this once the VPS is live.
-        // Value should be the base URL only, e.g. "http://123.45.67.89"
+        fsGroq   = d.groqApiKey||'';
+        fsHF     = d.hfApiKey||'';
+        // Oracle VPS PaddleOCR service — base URL only, e.g. "http://123.45.67.89"
         // (no trailing slash, no /scan-ledger — that's appended automatically)
-        fsOcrUrl   = d.ocrServiceUrl  ||'';
+        fsOcrUrl = d.ocrServiceUrl||'';
       }
     }catch(e){console.warn('Keys fetch:',e.message);}
   }
-  apiKeys={groq:fsGroq, mistral:fsMistral, together:fsTogether, hf:fsHF, ocrServiceUrl:fsOcrUrl, anthropic:fsAnthropic};
+  apiKeys={groq:fsGroq, hf:fsHF, ocrServiceUrl:fsOcrUrl};
   return apiKeys;
 }
 
@@ -331,37 +326,6 @@ function captureLedger(idx){
 
 function skipLedger(){allStudents=[];classGroups={};$('ledger-results').style.display='block';$('step2-nav').style.display='block';}
 
-function showDeepSeekKeyPrompt(){
-  const results = $('ledger-results');
-  if(results) results.style.display='block';
-  const classGroups = $('class-groups');
-  if(classGroups) classGroups.innerHTML='';
-  const tierCard = $('tier-auto-card');
-  if(tierCard) tierCard.innerHTML='';
-  const stats = $('as-total');
-  if(stats){ $('as-total').textContent='—';$('as-classes').textContent='—';$('as-conf').textContent='—';}
-  // debug panel removed — agent only sees success
-}
-
-async function saveDeepSeekKey(){
-  const key  = ($('ds-key-input')?.value||'').trim();
-  const prov = $('ds-prov-input')?.value || 'regolo';
-  if(!key){alert('Paste your SiliconFlow API key first.');return;}
-  localStorage.setItem('ag2_dsKey', key);
-  localStorage.setItem('ag2_dsProv', prov);
-  apiKeys = null;
-  if(db){
-    db.collection('admin_settings').doc('main').set(
-      {deepseekApiKey:key, deepseekProvider:prov},
-      {merge:true}
-    ).then(()=>console.log('✅ DeepSeek key saved to Firestore'))
-     .catch(e=>console.warn('Firestore save:', e.message));
-  }
-  const dbg=$('ocr-debug');if(dbg)dbg.style.display='none';
-  const res=$('ledger-results');if(res)res.style.display='none';
-  processAllLedgers();
-}
-
 async function processAllLedgers(){
   const images=Object.entries(ledgerImages);
   if(!images.length){alert('Photograph at least one ledger page first.');return;}
@@ -371,9 +335,9 @@ async function processAllLedgers(){
   const prog=$('ledger-prog'),status=$('ledger-status');
   prog.style.width='5%';
 
-  // ── Fetch all 4 provider keys once ─────────────────────────────────────
+  // ── Fetch provider keys once ────────────────────────────────────────────
   const keys=await _getApiKeys();
-  const hasAnyKey=keys.groq||keys.mistral||keys.together||keys.hf||keys.ocrServiceUrl;
+  const hasAnyKey=keys.groq||keys.hf||keys.ocrServiceUrl;
   if(!hasAnyKey){
     $('ledger-proc').style.display='none';
     // no-keys error suppressed — agent only sees success
@@ -382,28 +346,22 @@ async function processAllLedgers(){
   }
 
   const LEDGER_PROMPT=[
-    // This image is the LEFT HALF of a Nigerian school fees ledger.',
-    // Cropped to show ONLY: Serial No | Surname | Firstname | Balance B/F | Current Fees | Total',
-    // Payment installment columns have been removed from the image — do not look for them.',
-    'You are reading a Nigerian SCHOOL FEES LEDGER (handwritten). This is a full-page photo.',
-    'The key columns are (left side of the page):',
+    'You are reading the LEFT HALF of a Nigerian SCHOOL FEES LEDGER (handwritten).',
+    'This image has been cropped — payment installment columns are NOT visible. Do not look for them.',
+    'The columns you can see are:',
     '  Col 1: SERIAL NO (1, 2, 3...)',
     '  Col 2: SURNAME (family name — all caps)',
     '  Col 3: FIRSTNAME (given name — all caps)',
     '  Col 4: BALANCE FROM LAST TERM (debt carried forward — 0 or blank means none)',
     '  Col 5: CURRENT TERM FEES (the fee charged this term, e.g. 24000, 26000, 28000)',
     '  Col 6: TOTAL (col4 + col5 = everything this student owes)',
-    'The right side has payment installment columns — extract them too if visible:',
-    '  1ST PART PAYMENT, 2ND PART PAYMENT, 3RD PART PAYMENT amounts.',
-    '  paid = sum of all part payments made so far.',
     '',
     'YOUR TASK: For every numbered student row return:',
     '  name        = SURNAME + space + FIRSTNAME',
     '  balance_bf  = col 4 value (integer, 0 if blank or dash)',
     '  termFees    = col 5 value (integer)',
     '  total       = col 6 value (integer)',
-    '  paid        = sum of all part payment amounts visible on this row (integer, 0 if none)',
-    '  fully_paid  = true if the word FULLY or FULLY PAID or F/PAID appears on that row, OR if paid >= total',
+    '  fully_paid  = true ONLY if the word FULLY, FULLY PAID, or F/PAID appears written on that row',
     '  detected_class = class label at the top of the page (e.g. K-G, BASIC FOUR, NURSERY 1, BASIC THREE)',
     '  year        = year written at top of ledger (e.g. 2026)',
     '  term        = term number at top of ledger (e.g. 3)',
@@ -424,28 +382,30 @@ async function processAllLedgers(){
     '1. Every numbered row = one student. Read ALL rows. A page typically has 10-30 students.',
     '2. Crossed-out numbers: ignore the crossed-out value, read the correction written nearby.',
     '3. BALANCE written in a cell = a note about outstanding debt, not a payment received.',
-    '4. Return ONLY valid JSON — no markdown fences, no explanation text.',
+    '4. Read every number DIGIT BY DIGIT, not at a glance — a misread digit (7 vs 1, 0 vs 6,',
+    '   5 vs 8) silently produces a wrong total with no visible error downstream.',
+    '5. SELF-CHECK before finalizing each row: total must equal balance_bf + termFees.',
+    '   If they do not match, re-read that row\'s digits and correct before moving on.',
+    '6. Return ONLY valid JSON — no markdown fences, no explanation text.',
     '',
     'EXAMPLE OUTPUT:',
     '{"detected_class":"K-G","year":"2026","term":"3","students":[',
-    '{"name":"OLIYIDE GODWIN","balance_bf":0,"termFees":24000,"total":24000,"paid":24000,"fully_paid":true},',
-    '{"name":"KASALI RASAQ","balance_bf":5000,"termFees":24000,"total":29000,"paid":14000,"fully_paid":false},',
-    '{"name":"JOHN DEBORAH","balance_bf":3000,"termFees":26000,"total":29000,"paid":26000,"fully_paid":false}',
+    '{"name":"OLIYIDE GODWIN","balance_bf":0,"termFees":24000,"total":24000,"fully_paid":true},',
+    '{"name":"KASALI RASAQ","balance_bf":5000,"termFees":24000,"total":29000,"fully_paid":false},',
+    '{"name":"JOHN DEBORAH","balance_bf":3000,"termFees":26000,"total":29000,"fully_paid":false}',
     ']}'
   ].join('\n');
 
   allStudents=[];classGroups={};selDetectedClass='';selDetectedTerm='';selDetectedYear='';
 
-  // Build cascade in priority order.
-  // PaddleOCR (Oracle VPS, self-hosted, coordinate-based column reading)
-  // is tried FIRST when configured — it's free forever and structurally
-  // more reliable than vision-LLM guessing. Everything else is fallback.
+  // Build cascade in priority order: PaddleOCR (Oracle VPS, coordinate-based
+  // column reading — free forever, structurally more reliable than vision-LLM
+  // guessing) tried first when configured. Direct Groq (qwen3.6-27b) next.
+  // HuggingFace last — works without a key, rate-limited but functional.
   function buildCascade(imgUrl){
     const cascade=[];
     if(keys.ocrServiceUrl)cascade.push({name:'PaddleOCR (VPS)', fn:()=>callPaddleOCR(imgUrl,keys.ocrServiceUrl)});
-    // Groq only — proven, fast, free
-    if(keys.groq)    cascade.push({name:'Groq', fn:()=>callGroqVisionProxy(imgUrl,LEDGER_PROMPT,keys.groq)});
-    // HF is always last — works without a key (rate-limited but functional)
+    if(keys.groq)cascade.push({name:'Groq', fn:()=>callGroqVision(imgUrl,LEDGER_PROMPT,keys.groq)});
     cascade.push({name:'HuggingFace', fn:()=>callHFVision(imgUrl,LEDGER_PROMPT,keys.hf||'')});
     return cascade;
   }
@@ -632,31 +592,6 @@ function fixName(cls,idx,val){
 }
 
 function overrideTier(maxStr){selTier=TIERS.find(t=>t.max===parseInt(maxStr))||selTier;}
-
-function clearDsKeyAndRetry(){
-  localStorage.removeItem('ag2_dsKey');
-  localStorage.removeItem('ag2_dsProv');
-  apiKeys=null;
-  retryLedger();
-  const dbg=$('ocr-debug');if(dbg)dbg.style.display='none';
-  showDeepSeekKeyPrompt();
-  const res=$('ledger-results');if(res)res.style.display='block';
-}
-
-function retryLedger(){
-  ledgerImages={};ledgerPageCount=1;allStudents=[];classGroups={};
-  const caps=$('ledger-caps');
-  if(caps){
-    while(caps.children.length>2)caps.removeChild(caps.lastChild);
-    const btn=$('lc-0');
-    if(btn){btn.classList.remove('captured');[...btn.children].forEach(c=>{if(c.tagName==='IMG'||c.classList?.contains('cap-retake'))c.remove();else c.style.display='';});}
-  }
-  $('ledger-actions').style.display='none';
-  $('ledger-skip-init').style.display='block';
-  $('ledger-results').style.display='none';
-  $('step2-nav').style.display='none';
-  const dbg=$('ocr-debug');if(dbg)dbg.style.display='none';
-}
 
 // ── Step 3: Pitch ──────────────────────────────────────────────────────────
 function populatePitch(){
@@ -878,8 +813,8 @@ async function openCVPreprocess(dataUrl){
 }
 
 async function compressLedger(dataUrl){
-  // ── Step 0: OpenCV 5.0 preprocessing (deskew + denoise + equalise) ───────
-  // Runs before cropping. Falls back silently if OpenCV unavailable.
+  // OpenCV preprocessing (deskew + denoise + equalise) runs first.
+  // Falls back silently if OpenCV isn't available.
   let preprocessed = dataUrl;
   try{ preprocessed = await openCVPreprocess(dataUrl); }
   catch(e){ console.warn('[compressLedger] OpenCV skip:',e.message); }
@@ -889,21 +824,21 @@ async function compressLedger(dataUrl){
     img.onload=()=>{
       const origW=img.naturalWidth||img.width||1000;
       const origH=img.naturalHeight||img.height||750;
-      // ── KEY FIX: Crop to LEFT 50% before scaling ──────────────────────
-      // The ledger has ~14 columns. The critical ones (Serial, Names,
-      // Balance, Current Fees, Total) all live in the LEFT half.
-      // Payment installment columns (7-14) that confuse OCR are RIGHT half.
-      // By cropping left 50% THEN scaling to 800px, each critical column
-      // is ~2x larger in the final image → Groq reads it cleanly every time.
-      // Full page — do NOT crop. The name columns can extend beyond 50%.
-      // Scale to max 1024px wide so file stays manageable for vision APIs.
-      const scale=Math.min(1,1024/origW);
-      const outW=Math.round(origW*scale);
+      // Crop to LEFT 50% before scaling. The ledger has ~14 columns; the
+      // critical ones (Serial, Surname, Firstname, Balance, Current Fees,
+      // Total) all live in the left half. Payment-installment columns
+      // (7-14) live in the right half and are dropped — Groq reads
+      // fully_paid from the FULLY/F-PAID marker instead of summing them.
+      // Cropping first means each critical column is ~2x larger in the
+      // final image than scaling the full page would give.
+      const cropW=Math.round(origW*0.5);
+      const scale=Math.min(1,1024/cropW);
+      const outW=Math.round(cropW*scale);
       const outH=Math.round(origH*scale);
       const cv=document.createElement('canvas');cv.width=outW;cv.height=outH;
       const cx=cv.getContext('2d');
-      // Draw the full page
-      cx.drawImage(img,0,0,origW,origH,0,0,outW,outH);
+      // Source rect: left half only. Dest rect: full canvas.
+      cx.drawImage(img,0,0,cropW,origH,0,0,outW,outH);
       // Contrast enhancement — darken text, brighten paper
       const id=cx.getImageData(0,0,outW,outH);const d=id.data;
       let minV=255,maxV=0;
@@ -943,47 +878,7 @@ async function compressImage(dataUrl,maxW){
   });
 }
 
-async function callGroqText(prompt, apiKey){
-  const resp = await fetch('https://api.groq.com/openai/v1/chat/completions',{
-    method:'POST',
-    headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
-    body:JSON.stringify({
-      model:'qwen/qwen3.6-27b',
-      max_tokens:3000,
-      temperature:0.1,
-      reasoning_format:'hidden',
-      messages:[{role:'user',content:prompt}]
-    })
-  });
-  if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'Groq text '+resp.status);}
-  const d=await resp.json();
-  let t=d.choices?.[0]?.message?.content||'';
-  t=t.replace(/<think>[\s\S]*?<\/think>/g,'').trim();
-  return t;
-}
 
-async function callGeminiVision(imageDataUrl,prompt,apiKey){
-  const base64=imageDataUrl.split(',')[1];
-  const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
-  const resp=await fetch(
-    'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key='+apiKey,
-    {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        contents:[{parts:[
-          {inline_data:{mime_type:mimeType,data:base64}},
-          {text:prompt}
-        ]}],
-        generationConfig:{temperature:0.1,maxOutputTokens:4096}
-      })
-    }
-  );
-  if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.error?.message||'Gemini '+resp.status);}
-  const data=await resp.json();
-  const text=data.candidates?.[0]?.content?.parts?.[0]?.text||'';
-  return text.trim();
-}
 
 // ── Parse ledger JSON from any provider's text response ───────────────────
 function parseLedgerJSON(text){
@@ -1003,74 +898,6 @@ function parseLedgerJSON(text){
   };
   parseLedgerJSON._lastResult=result;
   return result;
-}
-
-// ── Mistral Pixtral Vision ────────────────────────────────────────────────
-async function callMistralVision(imageDataUrl,prompt,apiKey){
-  if(!apiKey)throw new Error('No Mistral key');
-  const base64=imageDataUrl.split(',')[1];
-  const mimeType=imageDataUrl.split(';')[0].split(':')[1]||'image/jpeg';
-  const resp=await fetch('https://api.mistral.ai/v1/chat/completions',{
-    method:'POST',
-    headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
-    body:JSON.stringify({
-      model:'pixtral-12b-2409',
-      max_tokens:3000,temperature:0.1,
-      messages:[{role:'user',content:[
-        {type:'image_url',image_url:{url:'data:'+mimeType+';base64,'+base64}},
-        {type:'text',text:prompt}
-      ]}]
-    })
-  });
-  if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.message||'Mistral '+resp.status);}
-  const data=await resp.json();
-  const text=(data.choices?.[0]?.message?.content||'').trim();
-  console.log('[Mistral] Raw response ('+text.length+' chars):',text.slice(0,300));
-  return text;
-}
-
-// ── Claude (Anthropic) — Via Base44 proxy (avoids CORS) ──────────────────
-const CLAUDE_PROXY_URL='https://api.base44.com/api/apps/6a57168a8c411237376a1bf9/functions/claudeOcr';
-const GROQ_PROXY_URL='https://api.base44.com/api/apps/6a57168a8c411237376a1bf9/functions/groqOcr';
-async function callClaudeVision(imageDataUrl,prompt,apiKey){
-  if(!apiKey)throw new Error('No Anthropic key');
-  const resp=await fetch(CLAUDE_PROXY_URL,{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({imageDataUrl,prompt,apiKey})
-  });
-  if(!resp.ok){
-    const err=await resp.json().catch(()=>({}));
-    const msg=err.error||'Claude proxy '+resp.status;
-    console.error('[Claude] Proxy error '+resp.status+':',msg);
-    throw new Error(msg);
-  }
-  const data=await resp.json();
-  const text=(data.text||'').trim();
-  console.log('[Claude] Raw response ('+text.length+' chars):',text.slice(0,300));
-  return text;
-}
-
-// ── Together AI — Llama Vision Free ─────────────────────────────────────
-// Together AI requires a public HTTPS URL (not base64). We upload to Firebase
-// Storage temporarily, call Together, then delete the file.
-async function uploadToStorageTemp(base64,mimeType){
-  const storage=firebase.storage();
-  const fname='ocr_tmp/'+Date.now()+'_'+Math.random().toString(36).slice(2)+'.jpg';
-  const ref=storage.ref(fname);
-  // Convert base64 to Blob
-  const byteStr=atob(base64);
-  const arr=new Uint8Array(byteStr.length);
-  for(let i=0;i<byteStr.length;i++)arr[i]=byteStr.charCodeAt(i);
-  const blob=new Blob([arr],{type:mimeType});
-  await ref.put(blob,{contentType:mimeType});
-  const url=await ref.getDownloadURL();
-  return{url,ref};
-}
-
-async function callTogetherVision(imageDataUrl,prompt,apiKey){
-  // Together AI disabled — Groq handles all OCR
-  throw new Error('Together AI disabled');
 }
 
 // ── HuggingFace — Qwen2.5-VL-7B-Instruct ────────────────────────────────
@@ -1138,28 +965,6 @@ async function callPaddleOCR(imageDataUrl,serviceUrl){
 
 
 
-// ── Per-field OCR removed 2026-07-18 — signboard step fills all fields at once ──
-
-// ── Groq Vision — Via Base44 proxy (avoids mobile network / CORS issues) ──
-async function callGroqVisionProxy(imageDataUrl, prompt, apiKey) {
-  if (!apiKey) throw new Error('No Groq key');
-  const resp = await fetch(GROQ_PROXY_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ imageDataUrl, prompt, apiKey })
-  });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err.error || 'Groq proxy ' + resp.status);
-  }
-  const data = await resp.json();
-  if (data.error) throw new Error(data.error);
-  let text = data.text || '';
-  text = text.replace(/<ildo>[\s\S]*?<\/ildo>/gi, '').trim();
-  console.log('[GroqProxy] model=' + data.model + ' (' + text.length + ' chars)');
-  return text;
-}
-
 async function callGroqVision(imageDataUrl,prompt,apiKey,_retry){
   if(_retry===undefined)_retry=0;
   const base64=imageDataUrl.split(',')[1];
@@ -1214,22 +1019,6 @@ function fileToDataUrl(file){
   return new Promise((resolve,reject)=>{
     const r=new FileReader();r.onload=e=>resolve(e.target.result);r.onerror=reject;r.readAsDataURL(file);
   });
-}
-
-function fallbackExtract(text){
-  const lines=text.split('\n').map(l=>l.trim()).filter(Boolean);
-  const students=[];const seen=new Set();
-  lines.forEach(line=>{
-    if(line.length<3||line.length>60)return;
-    if(/TOTAL|BALANCE|FEES|TERM|DATE|RECEIPT|LEDGER|SERIAL|SCHOOL|PAGE/i.test(line))return;
-    const name=line.replace(/^\d+[.)]\s*/,'').replace(/[^A-Za-z\s'-]/g,'').trim().toUpperCase();
-    if(name.length<3)return;
-    const key=name.replace(/[^A-Z]/g,'');
-    if(seen.has(key))return;
-    seen.add(key);
-    students.push({name,class:'UNKNOWN',balance:0,termFees:0,paid:0,status:'OWING',confidence:40});
-  });
-  return students;
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────────

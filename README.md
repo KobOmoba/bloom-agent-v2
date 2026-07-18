@@ -104,6 +104,13 @@ bloom-agent-v2/
 
 ## 📜 Change History (newest first)
 
+### 2026-07-18 — OCR on all manual fields + remove debug panels
+- **Requirement:** Agent should ONLY see success results — no error dumps, no debug text
+- **Fix 1:** Remove `ocr-debug` panel entirely from app
+- **Fix 2:** Add 📷 scan button beside every manual text field (school name, address, state, LGA, principal name, phone, email)
+- **Fix 3:** Each field scan uses Groq vision to read the photo and fill that specific field
+- **Ledger 0 students:** Silent retry — no error message shown to agent
+
 ### 2026-07-18 — Ledger OCR routed through server-side proxy
 - **Problem:** Ledger scan hung forever on mobile — direct Groq calls from browser timed out
 - **Fix:** Added `callGroqVisionProxy()` function that POSTs to Base44 `groqOcr` backend function
@@ -145,11 +152,12 @@ bloom-agent-v2/
 ---
 
 ## 🔜 Next Steps
-1. Bayo tests ledger OCR in incognito on phone → confirm students are extracted
-2. If debug panel shows 0 results → share what it says → Koda fixes
-3. Build commission tracker UI
-4. Build deal status + push notifications
-5. Build agent leaderboard
+1. ✅ Ledger OCR routed through proxy — Bayo to test
+2. ⏳ Remove ALL debug/error panels — agent only sees success results
+3. ⏳ Add OCR scan button to every manual text field (school name, address, state, LGA, principal name, phone, email)
+4. Build commission tracker UI
+5. Build deal status + push notifications
+6. Build agent leaderboard
 
 ---
 

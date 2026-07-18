@@ -340,24 +340,7 @@ function showDeepSeekKeyPrompt(){
   if(tierCard) tierCard.innerHTML='';
   const stats = $('as-total');
   if(stats){ $('as-total').textContent='—';$('as-classes').textContent='—';$('as-conf').textContent='—';}
-  const dbg=$('ocr-debug');
-  if(!dbg)return;
-  dbg.style.display='block';
-  dbg.innerHTML=[
-    '<div style="font-weight:700;font-size:.82rem;color:var(--money);margin-bottom:.5rem;">🔑 Enter your Regolo API Key</div>',
-    '<p style="font-size:.75rem;color:var(--sub);margin-bottom:.5rem;">',
-    'Regolo.ai hosts DeepSeek-OCR-2 free for 60 days (no credit card).<br>',
-    'Get your key at <strong>regolo.ai</strong> → Dashboard → API Keys',
-    '</p>',
-    '<input id="ds-key-input" type="password" placeholder="Paste Regolo API key...">',
-    '<select id="ds-prov-input" style="margin-top:.4rem;">',
-    '<option value="regolo">Regolo.ai (recommended)</option>',
-    '<option value="siliconflow">SiliconFlow</option>',
-    '<option value="deepinfra">DeepInfra</option>',
-    '</select>',
-    '<button onclick="saveDeepSeekKey()" style="background:var(--money);color:#fff;border:none;border-radius:10px;',
-    'padding:.65rem;font-size:.86rem;cursor:pointer;font-weight:700;width:100%;margin-top:.5rem;">',
-    '💾 Save Key & Scan Now</button>'
+  // debug panel removed — agent only sees success
   ].join('');
 }
 
@@ -394,14 +377,7 @@ async function processAllLedgers(){
   const hasAnyKey=keys.groq||keys.mistral||keys.together||keys.hf||keys.ocrServiceUrl;
   if(!hasAnyKey){
     $('ledger-proc').style.display='none';
-    const dbg=$('ocr-debug');
-    if(dbg){
-      dbg.style.display='block';
-      dbg.innerHTML='<div style="font-weight:700;color:var(--danger);margin-bottom:.5rem;">⚠️ No OCR keys found</div>'+
-        '<p style="font-size:.75rem;color:var(--sub);">Ask Bayo to add at least one of these to Firestore admin_settings → main:<br>'+
-        '<strong>groqApiKey</strong> (Groq) · <strong>mistralApiKey</strong> (Mistral) · '+
-        '<strong>togetherApiKey</strong> (Together AI) · <strong>hfApiKey</strong> (HuggingFace)</p>';
-    }
+    // no-keys error suppressed — agent only sees success
     $('ledger-results').style.display='block';
     return;
   }
@@ -536,29 +512,7 @@ async function processAllLedgers(){
     if(!succeeded){
       status.textContent='Page '+pageNum+': all providers returned 0 students';
       // ── Show diagnostic screen ─────────────────────────────────────────
-      const dbg=$('ocr-debug');
-      if(dbg){
-        dbg.style.display='block';
-        const rows=diagLog.map(d=>{
-          const icon=d.ok?'✅':d.students===0&&!d.error?'⚠️':'❌';
-          const rowColor=d.ok?'#10b981':d.error?'#ef4444':'#f59e0b';
-          return'<div style="border:1px solid '+rowColor+';border-radius:8px;padding:8px 10px;margin-bottom:6px;">'+
-            '<div style="font-weight:700;font-size:.8rem;color:'+rowColor+';">'+icon+' '+d.provider+'</div>'+
-            (d.error?'<div style="font-size:.73rem;color:#fca5a5;margin-top:2px;">Error: '+d.error+'</div>':'')+
-            (d.students?'<div style="font-size:.73rem;color:#6ee7b7;">Students found: '+d.students+'</div>':'')+
-            (d.raw&&!d.ok?'<div style="font-size:.68rem;color:var(--sub);margin-top:3px;word-break:break-all;background:rgba(0,0,0,.3);border-radius:6px;padding:6px;">📄 Raw response:<br>'+d.raw.slice(0,500)+(d.raw.length>500?'…':'')+'</div>':'')+
-            '</div>';
-        }).join('');
-        const sizeKB=Math.round(compressed.length*0.75/1024);
-        dbg.innerHTML=
-          '<div style="font-weight:700;font-size:.85rem;color:var(--warn);margin-bottom:.5rem;">🔍 Ledger Scan Diagnostic — Page '+pageNum+'</div>'+
-          '<div style="font-size:.75rem;color:var(--sub);margin-bottom:.5rem;">Image: '+sizeKB+'KB after processing</div>'+
-          rows+
-          '<div style="font-size:.72rem;color:var(--sub);margin-top:.5rem;">'+
-          'Screenshot this screen and send to Koda for debugging.'+
-          '</div>'+
-          '<button onclick="retryLedger()" style="background:var(--brand);color:#fff;border:none;border-radius:8px;padding:.5rem 1rem;font-size:.8rem;font-weight:700;margin-top:.5rem;width:100%;cursor:pointer;">📸 Retake & Retry</button>';
-      }
+      // diagnostic screen removed — agent only sees results
       await new Promise(r=>setTimeout(r,1500));
     }
 
@@ -666,13 +620,7 @@ function showLedgerResults(){
     if(tc)tc.innerHTML='<div class="card"><div class="ct">💡 Auto-selected Plan</div><p style="font-size:.74rem;color:var(--sub);margin-bottom:.4rem;">Based on '+allStudents.length+' students scanned</p><div style="background:rgba(37,99,235,.1);border:1px solid rgba(37,99,235,.3);border-radius:10px;padding:.65rem;"><div style="font-weight:800;">'+esc(selTier.name)+'</div><div style="color:var(--money);font-weight:700;">'+fmt(selTier.price)+'/term</div><div style="font-size:.7rem;color:var(--sub);margin-top:3px;">Your commission: <strong style="color:var(--money);">'+fmt(comm)+'</strong></div></div><label style="margin-top:.5rem;">Change plan (optional)</label><select id="tier-override" onchange="overrideTier(this.value)">'+TIERS.map(t=>'<option value="'+t.max+'"'+(t.max===selTier.max?' selected':'')+'>'+t.name+' — '+fmt(t.price)+'/term</option>').join('')+'</select></div>';
   }
 
-  if(!allStudents.length){
-    const dbg=$('ocr-debug');
-    if(dbg){
-      dbg.style.display='block';
-      dbg.innerHTML='<div style="font-size:.72rem;font-weight:700;color:var(--warn);margin-bottom:.3rem;">⚠️ 0 students found. Make sure the photo shows ONLY the fee ledger — no other images mixed in.</div><div style="font-size:.7rem;color:var(--sub);">Tips: ensure good lighting, hold phone flat above ledger, page fills the frame.</div><button onclick="retryLedger()" style="background:var(--brand);color:#fff;border:none;border-radius:8px;padding:.4rem .8rem;font-size:.74rem;cursor:pointer;margin-top:.4rem;font-weight:700;">📸 Retake & retry</button>';
-    }
-  }
+  // 0 students: silent — no error shown to agent
 
   $('step2-nav').style.display='block';
 }
@@ -1189,6 +1137,40 @@ async function callPaddleOCR(imageDataUrl,serviceUrl){
   });
 }
 
+
+
+// ── OCR for individual form fields ─────────────────────────────────────────
+function scanField(fieldId, fieldHint) {
+  const fileInput = document.getElementById('ffi-' + fieldId);
+  if (!fileInput) return;
+  fileInput.onchange = async (e) => {
+    const file = e.target.files[0];
+    fileInput.value = '';
+    if (!file) return;
+    const btn = document.querySelector('[onclick="scanField(\''+fieldId+'\',\''+fieldHint+'\')"]');
+    if (btn) { btn.textContent = '⏳'; btn.classList.add('ocr-scanning'); }
+    try {
+      const imageDataUrl = await fileToDataUrl(file);
+      const compressed = await compressImage(imageDataUrl, 1200, 0.82);
+      const keys = await _getApiKeys();
+      if (!keys.groq) throw new Error('No Groq key');
+      const prompt = 'Read this image and extract ONLY the ' + fieldHint + '. Return ONLY the raw text value — no explanation, no JSON, no labels. Just the value itself.';
+      const text = await callGroqVisionProxy(compressed, prompt, keys.groq);
+      // Clean up: strip think/ildo tags, trim whitespace
+      const clean = text.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<ildo>[\s\S]*?<\/ildo>/gi, '').trim();
+      if (clean) {
+        const el = document.getElementById(fieldId);
+        if (el) { el.value = clean; el.focus(); }
+      }
+    } catch (e) {
+      console.warn('[scanField] ' + fieldId + ' error:', e.message);
+      // Silent fail — field just stays empty for manual entry
+    } finally {
+      if (btn) { btn.textContent = '📷'; btn.classList.remove('ocr-scanning'); }
+    }
+  };
+  fileInput.click();
+}
 
 // ── Groq Vision — Via Base44 proxy (avoids mobile network / CORS issues) ──
 async function callGroqVisionProxy(imageDataUrl, prompt, apiKey) {

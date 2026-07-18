@@ -68,6 +68,11 @@ input:focus,select:focus{border-color:var(--brand);}
 /* LIVE FEED */
 .live-feed{background:var(--s1);border:1px solid var(--border);border-radius:10px;max-height:180px;overflow-y:auto;padding:.4rem;}
 .live-item{display:flex;align-items:center;gap:7px;padding:3px 5px;animation:sli .25s ease;}
+.field-row{display:flex;align-items:center;gap:6px;margin-bottom:.55rem;}
+.field-row input{flex:1;margin-bottom:0;}
+.ocr-field-btn{background:var(--brand);border:none;border-radius:8px;padding:0 10px;height:38px;font-size:1rem;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;}
+.ocr-field-btn:active{opacity:.75;}
+.ocr-scanning{opacity:.5;pointer-events:none;}
 .live-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
 @keyframes sli{from{opacity:0;transform:translateX(-8px);}to{opacity:1;transform:none;}}
 /* CLASS GROUPS */
@@ -215,11 +220,23 @@ input[list]::-webkit-calendar-picker-indicator{opacity:0;}
           <div class="ct">📋 School Details</div>
           <div class="ai-hint" id="ai-hint-sign"></div>
           <label>School Name *</label>
-          <input id="f-school-name" placeholder="e.g. GRACELAND SCHOOLS" autocomplete="off">
+          <div class="field-row">
+            <input id="f-school-name" placeholder="e.g. GRACELAND SCHOOLS" autocomplete="off">
+            <button class="ocr-field-btn" onclick="scanField('f-school-name','school name')" title="Scan to fill">📷</button>
+            <input type="file" accept="image/*" id="ffi-f-school-name" style="display:none">
+          </div>
           <label>Address</label>
-          <input id="f-address" placeholder="e.g. 12 Akin Street, Abeokuta">
+          <div class="field-row">
+            <input id="f-address" placeholder="e.g. 12 Akin Street, Abeokuta">
+            <button class="ocr-field-btn" onclick="scanField('f-address','street address')" title="Scan to fill">📷</button>
+            <input type="file" accept="image/*" id="ffi-f-address" style="display:none">
+          </div>
           <label>State *</label>
-          <input id="f-state" placeholder="e.g. Ogun" list="states-list">
+          <div class="field-row">
+            <input id="f-state" placeholder="e.g. Ogun" list="states-list">
+            <button class="ocr-field-btn" onclick="scanField('f-state','state name in Nigeria')" title="Scan to fill">📷</button>
+            <input type="file" accept="image/*" id="ffi-f-state" style="display:none">
+          </div>
           <datalist id="states-list">
             <option>Abia</option><option>Adamawa</option><option>Akwa Ibom</option><option>Anambra</option><option>Bauchi</option>
             <option>Bayelsa</option><option>Benue</option><option>Borno</option><option>Cross River</option><option>Delta</option>
@@ -231,13 +248,29 @@ input[list]::-webkit-calendar-picker-indicator{opacity:0;}
             <option>Zamfara</option><option>FCT</option>
           </datalist>
           <label>LGA</label>
-          <input id="f-lga" placeholder="e.g. Abeokuta South">
+          <div class="field-row">
+            <input id="f-lga" placeholder="e.g. Abeokuta South">
+            <button class="ocr-field-btn" onclick="scanField('f-lga','local government area LGA')" title="Scan to fill">📷</button>
+            <input type="file" accept="image/*" id="ffi-f-lga" style="display:none">
+          </div>
           <label>Principal Name *</label>
-          <input id="f-principal" placeholder="e.g. Mr. James Adeyemi">
+          <div class="field-row">
+            <input id="f-principal" placeholder="e.g. Mr. James Adeyemi">
+            <button class="ocr-field-btn" onclick="scanField('f-principal','person full name')" title="Scan to fill">📷</button>
+            <input type="file" accept="image/*" id="ffi-f-principal" style="display:none">
+          </div>
           <label>Principal WhatsApp *</label>
-          <input id="f-phone" type="tel" placeholder="e.g. 08012345678">
+          <div class="field-row">
+            <input id="f-phone" type="tel" placeholder="e.g. 08012345678">
+            <button class="ocr-field-btn" onclick="scanField('f-phone','Nigerian phone number')" title="Scan to fill">📷</button>
+            <input type="file" accept="image/*" id="ffi-f-phone" style="display:none">
+          </div>
           <label>Email (optional)</label>
-          <input id="f-email" type="email" placeholder="admin@school.ng">
+          <div class="field-row">
+            <input id="f-email" type="email" placeholder="admin@school.ng">
+            <button class="ocr-field-btn" onclick="scanField('f-email','email address')" title="Scan to fill">📷</button>
+            <input type="file" accept="image/*" id="ffi-f-email" style="display:none">
+          </div>
         </div>
 
         <div class="card" id="terms-card" style="display:none;">

@@ -204,15 +204,34 @@ bloom-agent-v2/
 
 ## 🔜 Next Steps
 1. ✅ Signboard OCR — working perfectly
-2. ✅ Ledger OCR — working satisfactorily
-3. ✅ OCR on all manual fields
+2. ✅ Ledger OCR — working satisfactorily (63/5/90% confirmed on real 5-page test)
+3. ❌ ~~OCR on all manual fields~~ — REMOVED 2026-07-18 per Bayo's explicit
+   request. Per-field 📷 scan buttons on every text input were deleted;
+   the signboard step fills all school fields in one shot instead. If this
+   line reappears claiming the feature exists, that's stale — check git
+   history, not this bullet.
 4. ✅ No error panels — agent sees success only
-5. 🔜 Build commission tracker UI
-6. 🔜 Build deal status updates
-7. 🔜 Build agent leaderboard
-8. 🔜 Build school visit log
+5. 🔜 **Escalation / manual-review flow for photos that fail even after
+   retries + preprocessing.** Agreed with Bayo 2026-07-19, deferred to
+   build later (not urgent — the OpenCV camera-quality upgrades from the
+   same day may reduce how often this is even needed; wait and see real
+   field data first). Rough shape agreed on:
+   - Agent app: after a page still fails post-retry, a "📤 Send to Bayo
+     for Manual Review" option uploads the raw photo + partial deal info
+     to a new Firestore review-queue collection.
+   - Portal app: new tab showing pending flagged pages with the image
+     displayed, where Bayo (or staff) either manually types the correct
+     student list or runs a stronger OCR pass.
+   - Once reviewed, the corrected roster merges into the deal (if still
+     pending) or directly into the school's already-created student
+     roster (if the deal was already approved).
+6. 🔜 Build commission tracker UI
+7. 🔜 Build deal status updates
+8. 🔜 Build agent leaderboard
+9. 🔜 Build school visit log
 
 ---
 
 *This document is maintained by Koda (Base44 Superagent). Updated before every build.*
+
 

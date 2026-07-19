@@ -14,6 +14,29 @@ let timerSec=0,timerInterval=null;
 let ledgerPageCount=1,ledgerImages={};
 let allStudents=[],classGroups={},selTier=null,selDetectedTerm='',selDetectedYear='',failedPages=[];
 
+// ── Groq rate-limit tracking — read from real response headers, not guessed ─
+// Groq sends x-ratelimit-remaining-tokens / x-ratelimit-reset-tokens on
+// EVERY response (success or 429). Reading these lets the cooldown between
+// pages be adaptive: skip the wait when budget is fine, wait exactly the
+// right amount when it's not — instead of a blind fixed guess that either
+// wastes time when budget is fine or isn't long enough when it's low.
+let groqRateState={remainingTokens:null,resetMs:0};
+function parseGroqDuration(v){
+  if(!v)return 0;
+  v=String(v).trim();
+  if(v.endsWith('ms'))return parseFloat(v);
+  if(v.endsWith('s'))return parseFloat(v)*1000;
+  return parseFloat(v)*1000||0;
+}
+function updateGroqRateState(resp){
+  try{
+    const remaining=resp.headers.get('x-ratelimit-remaining-tokens');
+    const reset=resp.headers.get('x-ratelimit-reset-tokens');
+    if(remaining!==null)groqRateState.remainingTokens=parseInt(remaining);
+    if(reset!==null)groqRateState.resetMs=parseGroqDuration(reset);
+  }catch(e){/* headers not available in this environment — ignore */}
+}
+
 // ── Tiers ──────────────────────────────────────────────────────────────────
 const TIERS=[
   {max:50,   price:10000, name:'Starter (1-50)'},
@@ -529,12 +552,7 @@ async function retryFailedPages(){
     const idxKey=String(pageNum-1);
     if(!ledgerImages[idxKey]){stillFailed.push(pageNum);continue;}
     prog.style.width=Math.round((i/pagesToRetry.length)*85)+'%';
-    if(i>0){
-      for(let s=20;s>0;s--){
-        status.textContent='Cooldown ('+s+'s) before retrying page '+pageNum+'...';
-        await new Promise(r=>setTimeout(r,1000));
-      }
-    }
+    if(i>0)await ledgerCooldown(status,pageNum);
     const result=await processOnePage(idxKey,keys,status,pagesToRetry.length);
     if(result.succeeded){
       mergePageIntoResults(result.students,result.pageClass,result.term,result.year);
@@ -547,6 +565,32 @@ async function retryFailedPages(){
   prog.style.width='100%';
   status.textContent='Retry done — '+allStudents.length+' students total';
   setTimeout(()=>{$('ledger-proc').style.display='none';showLedgerResults();},600);
+}
+
+// ── Adaptive cooldown before the next page ──────────────────────────────────
+// Replaces a blind fixed wait with a check against Groq's actual reported
+// remaining budget. If there's comfortably enough left for another page,
+// barely pause at all. If it's genuinely low, wait exactly what Groq says
+// is left in the window (resetMs) instead of guessing — this is what
+// collapsed "5-6 manual retries" down to close to zero.
+async function ledgerCooldown(status,pageNum){
+  const EXPECTED_PAGE_TOKENS=5000; // generous buffer above max_tokens(4096)+image encoding
+  const r=groqRateState.remainingTokens;
+  if(r===null||r>=EXPECTED_PAGE_TOKENS){
+    // No data yet, or plenty of budget left — just a short courtesy pause
+    // (separate RPM/RPD limits still apply even when TPM is fine).
+    for(let s=3;s>0;s--){
+      status.textContent='Next: page '+pageNum+' in '+s+'s...';
+      await new Promise(res=>setTimeout(res,1000));
+    }
+    return;
+  }
+  const waitMs=Math.min(Math.max(groqRateState.resetMs,3000),65000);
+  const waitS=Math.ceil(waitMs/1000);
+  for(let s=waitS;s>0;s--){
+    status.textContent='Token budget low ('+r+' left) — waiting '+s+'s before page '+pageNum+'...';
+    await new Promise(res=>setTimeout(res,1000));
+  }
 }
 
 async function processAllLedgers(){
@@ -575,12 +619,7 @@ async function processAllLedgers(){
     const pageNum=parseInt(idxKey)+1;
     prog.style.width=Math.round((i/images.length)*85)+'%';
 
-    if(i>0){
-      for(let s=20;s>0;s--){
-        status.textContent='Cooldown ('+s+'s) before page '+pageNum+'...';
-        await new Promise(r=>setTimeout(r,1000));
-      }
-    }
+    if(i>0)await ledgerCooldown(status,pageNum);
 
     const result=await processOnePage(idxKey,keys,status,images.length);
 
@@ -1114,6 +1153,7 @@ async function callGroqVision(imageDataUrl,prompt,apiKey,maxTokens,_retry){
       })
     });
     clearTimeout(fetchTimer);
+    updateGroqRateState(resp);
   }catch(fetchErr){
     clearTimeout(fetchTimer);
     if(_retry<2){

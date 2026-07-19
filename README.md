@@ -1,6 +1,6 @@
 # 🌸 Bloom Agent v2 — Living Handover Document
 **EduBloom Suite · AariNAT Company Limited · Abeokuta, Nigeria**
-**Last updated:** 2026-07-18
+**Last updated:** 2026-07-19
 
 > This README is the single source of truth for the state of this app.
 > Koda (the AI agent) updates it before and after every major change.
@@ -64,11 +64,7 @@ All keys are fetched from Firestore `admin_settings/main` via `getEduBloomKeys()
 The cascade falls through to Together AI → Mistral → HuggingFace (these are wired but Together AI's free model needs a public URL, not base64 — may not work).
 
 ### On-Screen Debug Panel
-If the ledger scan completes but finds **0 students**, a diagnostic panel appears automatically on screen (no DevTools needed). It shows:
-- Which provider was tried
-- What error came back (if any)
-- The raw AI response text
-- Image size after compression
+**REMOVED.** Agent only ever sees success results. If ledger returns 0 students it fails silently — no error text shown.
 
 ---
 
@@ -408,7 +404,8 @@ bloom-agent-v2/
 | Feature | Status |
 |---|---|
 | Signboard OCR | ✅ Working |
-| Ledger OCR (proxy) | 🧪 Deployed — needs real-device test |
+| OCR on manual fields | ✅ All 7 fields have 📷 scan button |
+| Ledger OCR (proxy) | 🧪 Deployed — awaiting Bayo real-device confirmation |
 | Commission tracker | 🚧 Not yet built |
 | Deal status updates | 🚧 Not yet built |
 | Leaderboard | 🚧 Not yet built |
@@ -417,12 +414,13 @@ bloom-agent-v2/
 ---
 
 ## 🔜 Next Steps
-1. ✅ Ledger OCR routed through proxy — Bayo to test
-2. ⏳ Remove ALL debug/error panels — agent only sees success results
-3. ⏳ Add OCR scan button to every manual text field (school name, address, state, LGA, principal name, phone, email)
-4. Build commission tracker UI
-5. Build deal status + push notifications
-6. Build agent leaderboard
+1. ✅ Ledger OCR routed through proxy
+2. ✅ All debug/error panels removed — agent only sees success results
+3. ✅ OCR 📷 scan button on every manual text field (school name, address, state, LGA, principal name, phone, email)
+4. ⏳ **Bayo to test ledger OCR on phone in incognito — confirm students load**
+5. Build commission tracker UI
+6. Build deal status + push notifications
+7. Build agent leaderboard
 
 ---
 

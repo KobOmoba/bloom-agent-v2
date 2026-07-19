@@ -116,6 +116,65 @@ bloom-agent-v2/
 
 ## 📜 Change History (newest first)
 
+### 2026-07-19 — Camera-quality resilience for agents on poorer phone cameras
+- **Context:** field-tested pipeline is now accurate (63/5/90% matches
+  hand-count), but Bayo raised a real concern — not every agent will have a
+  good camera. Three additions target this specifically:
+- **1. Perspective/keystone correction (EXPERIMENTAL, best-effort):** the
+  existing deskew only corrected simple rotation. A camera held at an angle
+  produces trapezoidal distortion that rotation alone can't fix. New
+  `tryPerspectiveCorrect()` detects the ledger's own ruled grid lines
+  (agents photograph a tight crop of the table, not a full page against a
+  background, so classic document-scanner edge detection doesn't apply
+  here) via Hough line transform, estimates the four corners via proper
+  line-intersection geometry, validates the resulting quadrilateral isn't
+  degenerate (skew ratio check, minimum size check, needs ≥3 lines in each
+  direction), and only then applies `cv.warpPerspective`. If validation
+  fails for any reason, returns `null` and the pipeline falls back to the
+  pre-existing rotation-only deskew — it never applies a warp it isn't
+  confident about. **Flagged experimental because its real-world hit rate
+  depends on how consistently ledger grid lines are visible in a given
+  photo — this needs field validation, not just code review.**
+- **2. CLAHE replacing global histogram equalization:** cheaper cameras
+  handle exposure worse — one half of a page bright, the other in shadow
+  from the phone itself. Global `equalizeHist` doesn't fix that unevenness;
+  CLAHE (adaptive, region-by-region equalization) does.
+- **3. Blur detection at capture time, not after OCR fails:** Laplacian
+  variance (`computeBlurScore()`), computed on a resized reference width
+  for consistency across different camera resolutions. Runs immediately
+  after `captureLedger()` takes the photo — if variance is below threshold
+  (60, a heuristic that will likely need tuning from real field data),
+  the agent gets an immediate "this looks blurry, retake?" prompt instead
+  of finding out 30-90 seconds later when every OCR provider returns
+  nothing. Directly targets the Basic Three page-2 symptom from the
+  previous test (a small page needing 3 retries while bigger pages
+  succeeded faster — consistent with a genuine capture-quality issue on
+  that one photo, not a token/rate-limit issue).
+- **What none of this can fix, and isn't trying to:** true motion blur
+  (shaky hands) beyond what Laplacian detection catches and flags for
+  retake, insufficient sensor resolution, and fully blown-out glare spots.
+  No preprocessing invents pixels that were never captured — those need an
+  actual retake, which the blur-detection prompt now surfaces immediately
+  instead of downstream.
+- **`loadOpenCV()` now also triggers on first photo capture** (blur check)
+  instead of only at OCR time — the ~7MB CDN load happens during a natural
+  pause instead of causing a delay right before "Read All Pages."
+- **⚠️ Note on this changelog:** this README had diverged from the actual
+  live `app.js` before this edit — a prior entry documenting a passed
+  5-page/63-student field test (2026-07-19, from Claude/Anthropic) was
+  missing, replaced by a different, earlier-dated entry. The live `app.js`
+  itself was verified intact and unaffected — only this documentation file
+  was overwritten by a concurrent edit. Flagged to Bayo directly; worth
+  checking in on whenever two agents (Claude + Koda) are both actively
+  pushing to this repo in the same session.
+- **Deployed:** cache bumped to `?v=18`.
+- **Not yet field-tested** — next real-world scan should specifically note
+  whether perspective correction fires (check console logs) and whether
+  the blur-retake prompt ever triggers, and how often either helps vs.
+  false-positives.
+- **Requested by:** Bayo, prompted by the Basic Three retry pattern.
+  Implemented by Claude (Anthropic).
+
 ### 2026-07-19 — Confirmed working on real device
 - Signboard OCR confirmed working perfectly on mobile (direct Groq, no proxy)
 - Ledger OCR confirmed working satisfactorily — rescan trick handles missed pages
@@ -156,3 +215,4 @@ bloom-agent-v2/
 ---
 
 *This document is maintained by Koda (Base44 Superagent). Updated before every build.*
+

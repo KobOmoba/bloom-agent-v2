@@ -336,7 +336,12 @@ function captureLedger(idx){
   const input=$('li-'+idx);if(!input)return;
   input.onchange=e=>{
     const file=e.target.files[0];if(!file)return;
-    fileToDataUrl(file).then(url=>{
+    fileToDataUrl(file).then(async url=>{
+      const variance=await computeBlurScore(url);
+      if(variance!==null&&variance<BLUR_VARIANCE_THRESHOLD){
+        const retake=confirm('⚠️ This photo looks blurry and may not read well.\n\nTap OK to retake now, or Cancel to use it anyway.');
+        if(retake){captureLedger(idx);return;}
+      }
       ledgerImages[idx]=url;
       markCaptured('lc-'+idx,url);
       $('ledger-actions').style.display='block';
@@ -864,6 +869,129 @@ function loadOpenCV(){
   });
 }
 
+// ── Line intersection helper (standard two-line intersection formula) ──────
+function lineIntersect(p1,p2,p3,p4){
+  const d=(p1.x-p2.x)*(p3.y-p4.y)-(p1.y-p2.y)*(p3.x-p4.x);
+  if(Math.abs(d)<1e-6)return null; // parallel — no intersection
+  const t=((p1.x-p3.x)*(p3.y-p4.y)-(p1.y-p3.y)*(p3.x-p4.x))/d;
+  return{x:p1.x+t*(p2.x-p1.x),y:p1.y+t*(p2.y-p1.y)};
+}
+
+// ── Perspective correction — BEST EFFORT, experimental ─────────────────────
+// A camera held at an angle to the page produces trapezoidal ("keystone")
+// distortion — one side of the ledger table bigger than the other. Simple
+// rotation (tryDeskew below) does NOT fix this. This detects the ledger's
+// own ruled grid lines (not a page edge against a background — agents
+// photograph tight crops of the table itself, so classic "document scanner"
+// edge detection doesn't apply here) and warps the four estimated corners
+// back to a flat rectangle.
+// This is genuinely best-effort: it requires enough horizontal AND vertical
+// ruled lines to be detected and to form a plausible (non-degenerate)
+// quadrilateral. If that validation fails for any reason, it returns null
+// and the caller falls back to the existing rotation-only deskew — it never
+// applies a warp it isn't reasonably confident about.
+function tryPerspectiveCorrect(grayMat,w,h){
+  try{
+    const edges=new cv.Mat();
+    cv.Canny(grayMat,edges,50,150);
+    const linesH=new cv.Mat(),linesV=new cv.Mat();
+    cv.HoughLinesP(edges,linesH,1,Math.PI/180,Math.round(w*0.25),Math.round(w*0.30),20);
+    cv.HoughLinesP(edges,linesV,1,Math.PI/180,Math.round(h*0.12),Math.round(h*0.18),20);
+
+    const hLines=[],vLines=[];
+    for(let i=0;i<linesH.rows;i++){
+      const x1=linesH.intAt(i,0),y1=linesH.intAt(i,1),x2=linesH.intAt(i,2),y2=linesH.intAt(i,3);
+      const ang=Math.atan2(y2-y1,x2-x1)*180/Math.PI;
+      if(Math.abs(ang)<12)hLines.push({p1:{x:x1,y:y1},p2:{x:x2,y:y2},mid:(y1+y2)/2});
+    }
+    for(let i=0;i<linesV.rows;i++){
+      const x1=linesV.intAt(i,0),y1=linesV.intAt(i,1),x2=linesV.intAt(i,2),y2=linesV.intAt(i,3);
+      const ang=Math.atan2(y2-y1,x2-x1)*180/Math.PI;
+      if(Math.abs(Math.abs(ang)-90)<12)vLines.push({p1:{x:x1,y:y1},p2:{x:x2,y:y2},mid:(x1+x2)/2});
+    }
+    edges.delete();linesH.delete();linesV.delete();
+
+    // Need a confident sample of both line families — otherwise this is
+    // guesswork, and guesswork here means silently mangling a good photo.
+    if(hLines.length<3||vLines.length<3)return null;
+
+    hLines.sort((a,b)=>a.mid-b.mid);
+    vLines.sort((a,b)=>a.mid-b.mid);
+    const topLine=hLines[0],botLine=hLines[hLines.length-1];
+    const leftLine=vLines[0],rightLine=vLines[vLines.length-1];
+
+    const tl=lineIntersect(topLine.p1,topLine.p2,leftLine.p1,leftLine.p2);
+    const tr=lineIntersect(topLine.p1,topLine.p2,rightLine.p1,rightLine.p2);
+    const bl=lineIntersect(botLine.p1,botLine.p2,leftLine.p1,leftLine.p2);
+    const br=lineIntersect(botLine.p1,botLine.p2,rightLine.p1,rightLine.p2);
+    if(!tl||!tr||!bl||!br)return null;
+
+    // Sanity checks — reject anything that doesn't look like a real
+    // slightly-skewed rectangle. Allow generous margin (corners can fall
+    // just outside the frame) but reject wildly degenerate estimates.
+    const pts=[tl,tr,bl,br];
+    const margin=w*0.25;
+    for(const p of pts){
+      if(!isFinite(p.x)||!isFinite(p.y))return null;
+      if(p.x<-margin||p.x>w+margin||p.y<-h*0.25||p.y>h+h*0.25)return null;
+    }
+    const topW=Math.hypot(tr.x-tl.x,tr.y-tl.y), botW=Math.hypot(br.x-bl.x,br.y-bl.y);
+    const leftH=Math.hypot(bl.x-tl.x,bl.y-tl.y), rightH=Math.hypot(br.x-tr.x,br.y-tr.y);
+    if(topW<w*0.3||botW<w*0.3||leftH<h*0.3||rightH<h*0.3)return null; // too small/collapsed
+    const wRatio=Math.max(topW,botW)/Math.max(1,Math.min(topW,botW));
+    const hRatio=Math.max(leftH,rightH)/Math.max(1,Math.min(leftH,rightH));
+    if(wRatio>1.6||hRatio>1.6)return null; // too skewed to trust — likely a bad detection
+
+    const srcPts=cv.matFromArray(4,1,cv.CV_32FC2,[tl.x,tl.y,tr.x,tr.y,br.x,br.y,bl.x,bl.y]);
+    const dstPts=cv.matFromArray(4,1,cv.CV_32FC2,[0,0,w,0,w,h,0,h]);
+    const M=cv.getPerspectiveTransform(srcPts,dstPts);
+    const warped=new cv.Mat();
+    cv.warpPerspective(grayMat,warped,M,new cv.Size(w,h),cv.INTER_LINEAR,cv.BORDER_CONSTANT,new cv.Scalar(255,255,255,255));
+    srcPts.delete();dstPts.delete();M.delete();
+    console.log('[OpenCV] Perspective-corrected (skew ratios '+wRatio.toFixed(2)+'/'+hRatio.toFixed(2)+')');
+    return warped;
+  }catch(e){console.warn('[OpenCV] Perspective correction failed:',e.message);return null;}
+}
+
+// ── Blur detection — Laplacian variance, computed right after capture ──────
+// Cheap, standard technique: sharp images have high-variance edges, blurry
+// images have low variance. This runs BEFORE the photo is even sent for
+// OCR, so a genuinely unusable photo (shaky hands, autofocus failure) gets
+// caught in ~1 second with an immediate retake prompt, instead of the agent
+// finding out 30-90 seconds later when every OCR provider returns nothing.
+// Threshold is a heuristic tuned on a resized reference width for
+// consistency across different phone camera resolutions — may need
+// adjustment from real field data over time.
+async function computeBlurScore(dataUrl){
+  try{await loadOpenCV();}catch(e){return null;}
+  return new Promise(resolve=>{
+    const img=new Image();
+    img.onload=()=>{
+      try{
+        const refW=800;
+        const scale=Math.min(1,refW/(img.naturalWidth||img.width||refW));
+        const w=Math.round((img.naturalWidth||img.width)*scale);
+        const h=Math.round((img.naturalHeight||img.height)*scale);
+        const tmp=document.createElement('canvas');tmp.width=w;tmp.height=h;
+        tmp.getContext('2d').drawImage(img,0,0,w,h);
+        const src=cv.imread(tmp);
+        const gray=new cv.Mat();
+        cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY);
+        const lap=new cv.Mat();
+        cv.Laplacian(gray,lap,cv.CV_64F);
+        const mean=new cv.Mat(),stddev=new cv.Mat();
+        cv.meanStdDev(lap,mean,stddev);
+        const variance=Math.pow(stddev.doubleAt(0,0),2);
+        [src,gray,lap,mean,stddev].forEach(m=>m.delete());
+        resolve(variance);
+      }catch(e){console.warn('[Blur check] error:',e.message);resolve(null);}
+    };
+    img.onerror=()=>resolve(null);
+    img.src=dataUrl;
+  });
+}
+const BLUR_VARIANCE_THRESHOLD=60; // below this = flag as likely blurry
+
 // ── Deskew helper: detect ledger ruled lines via Hough transform → rotate ──
 function tryDeskew(grayMat,w,h){
   try{
@@ -921,14 +1049,30 @@ async function openCVPreprocess(dataUrl){
         // Step 1: Grayscale (proper luminance weights via OpenCV)
         cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY);
 
-        // Step 2: Light Gaussian blur — kills paper grain without hurting handwriting
-        cv.GaussianBlur(gray,blurred,new cv.Size(3,3),0);
+        // Step 2: Perspective correction (best-effort) — fixes trapezoidal
+        // keystone distortion from a camera held at an angle, which simple
+        // rotation (step 5) cannot fix. Falls back safely to the uncorrected
+        // grayscale if a confident quadrilateral wasn't found.
+        const perspectiveCorrected=tryPerspectiveCorrect(gray,tmp.width,tmp.height);
+        const workingMat=perspectiveCorrected||gray;
 
-        // Step 3: Histogram equalisation — corrects uneven lighting across the page
-        // (one corner dark, another bright — common with phone photography)
-        cv.equalizeHist(blurred,equalized);
+        // Step 3: Light Gaussian blur — kills paper grain without hurting handwriting
+        cv.GaussianBlur(workingMat,blurred,new cv.Size(3,3),0);
 
-        // Step 4: Deskew — detect and correct photo angle using ledger ruled lines
+        // Step 4: CLAHE (adaptive/local histogram equalisation) — corrects
+        // uneven lighting REGION BY REGION instead of across the whole page.
+        // Cheaper cameras handle exposure worse, so it's common to get one
+        // half of a page brighter than the other (shadow from the phone
+        // itself, uneven room lighting) — global equalizeHist doesn't fix
+        // that unevenness, CLAHE does.
+        const clahe=new cv.CLAHE(3.0,new cv.Size(8,8));
+        clahe.apply(blurred,equalized);
+        clahe.delete();
+
+        // Step 5: Deskew — catches any small residual rotation. If step 2
+        // already applied a perspective correction, this is mostly a
+        // touch-up pass; if step 2 was skipped, this is the only rotation
+        // correction, same as before.
         const deskewed=tryDeskew(equalized,tmp.width,tmp.height);
         const final=deskewed||equalized;
 
@@ -936,11 +1080,11 @@ async function openCVPreprocess(dataUrl){
         cv.imshow(out,final);
 
         // Cleanup all Mats
-        [src,gray,blurred,equalized,deskewed].forEach(m=>{
+        [src,gray,perspectiveCorrected,blurred,equalized,deskewed].forEach(m=>{
           if(m)try{m.delete();}catch(e){}
         });
 
-        console.log('[OpenCV] Preprocessing done —',tmp.width+'×'+tmp.height,'→ deskew:'+(deskewed?'yes':'no'));
+        console.log('[OpenCV] Preprocessing done —',tmp.width+'×'+tmp.height,'→ perspective:'+(perspectiveCorrected?'yes':'no'),'deskew:'+(deskewed?'yes':'no'));
         resolve(out.toDataURL('image/jpeg',0.97));
       }catch(e){
         console.warn('[OpenCV] Preprocessing error:',e.message);

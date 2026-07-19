@@ -104,6 +104,34 @@ bloom-agent-v2/
 
 ## 📜 Change History (newest first)
 
+### 2026-07-19 — Full 5-page field test PASSED (63 students, 5 classes) + speed fix for retry count
+- **Result:** the same 5-page ledger from the earlier field tests came back
+  at **63 students across 5 classes, 90% confidence** — matches the hand
+  count from the original photos almost exactly (~62-65 estimated). Crop
+  width, reading-discipline prompt, and payment-status fixes are confirmed
+  working on real data.
+- **Remaining complaint:** it took 5-6 manual "retry failed page" taps to
+  get there, both in incognito and normal browser. Bayo's first instinct
+  was "tighter prompt or better cropping" — worth stating clearly: **that
+  was not the problem.** The 63/5/90% result proves the prompt and crop
+  are already working. The retry count was a rate-limit efficiency problem,
+  not an accuracy problem.
+- **Root cause:** the app only found out it was rate-limited *after* a 429,
+  then reactively backed off. It never looked at the budget it actually
+  had left before making the next request.
+- **Fix:** Groq sends `x-ratelimit-remaining-tokens` and
+  `x-ratelimit-reset-tokens` on every response, success or not. The app now
+  reads these after every call and uses them for an **adaptive** cooldown:
+  if there's comfortably enough token budget left for another page, barely
+  pause at all (~3s courtesy buffer). If the budget is genuinely low, wait
+  exactly what Groq reports is left in the window — not a blind 20s guess,
+  and not a reactive scramble after already getting a 429. This should
+  collapse most runs down to needing zero or one retry instead of 5-6.
+- **Deployed:** cache bumped to `?v=17`.
+- **Not yet re-tested** — next test should time how long the same 5-page
+  scan takes end-to-end and how many manual retries (if any) it needs now.
+- **Found by:** Bayo. Root cause and fix by Claude (Anthropic).
+
 ### 2026-07-18 — Targeted retry: failed pages only, not the whole scan
 - **Bayo's point:** retrying a failed page shouldn't force re-scanning all 5
   pages again — that wastes time and burns Groq quota re-reading pages that
@@ -399,6 +427,7 @@ bloom-agent-v2/
 ---
 
 *This document is maintained by Koda (Base44 Superagent). Updated before every build.*
+
 
 
 

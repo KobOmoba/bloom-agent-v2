@@ -104,6 +104,26 @@ bloom-agent-v2/
 
 ## 📜 Change History (newest first)
 
+### 2026-07-18 — Targeted retry: failed pages only, not the whole scan
+- **Bayo's point:** retrying a failed page shouldn't force re-scanning all 5
+  pages again — that wastes time and burns Groq quota re-reading pages that
+  already succeeded.
+- **Fix:** refactored the per-page OCR logic into two reusable pieces —
+  `processOnePage()` (compress + cascade + parse for one page) and
+  `mergePageIntoResults()` (dedup + status derivation + push into
+  `allStudents`/`classGroups`) — shared by both the full "Read All Pages"
+  scan and a new `retryFailedPages()` function.
+- **The failed-page warning banner now has a "🔁 Retry just page(s) X, Y"
+  button** that loops ONLY over the page numbers in `failedPages`, using
+  the same 20s cooldown + Retry-After-aware backoff as a full scan, but
+  touches nothing that already succeeded. Already-found students are
+  untouched; only the missing pages get re-sent to Groq.
+- **Retake still works with this:** if an agent hits "Retake" on a specific
+  page's thumbnail first, `ledgerImages[idx]` gets overwritten with the new
+  photo, so the targeted retry automatically picks up the fresh capture.
+- **Deployed:** cache bumped to `?v=16`.
+- **Found by:** Bayo. Fixed by Claude (Anthropic).
+
 ### 2026-07-18 — FIX: random page failures across repeated runs on identical photos
 - **Bayo's report:** same 5 ledger photos, run 3 separate times (2x
   incognito, 1x normal browser) — 3 different total student counts, and a
@@ -379,6 +399,7 @@ bloom-agent-v2/
 ---
 
 *This document is maintained by Koda (Base44 Superagent). Updated before every build.*
+
 
 
 

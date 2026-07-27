@@ -3,7 +3,8 @@
 **Last updated:** 2026-07-19
 
 > This README is the single source of truth for the state of this app.
-> Koda (the AI agent) updates it before and after every major change.
+> Bayo no longer involves Base44/Koda in this project as of 2026-07-25 —
+> updates come from Claude (Anthropic) sessions only going forward.
 > Bayo can read this at any time to understand exactly where things stand and continue from here.
 
 ---
@@ -56,16 +57,23 @@ All keys are fetched from Firestore `admin_settings/main` via `getEduBloomKeys()
 - **Key behaviour:** Agent can rescan missed pages — the app merges results across multiple scans until all students are captured
 - **Rule:** DO NOT add AbortControllers, timeouts, or proxies — direct Groq calls work on mobile
 
-### Pipeline 3: Manual Field OCR (Step 1 fields)
-- **Engine:** Groq via `callGroqVisionProxy` (Base44 backend)
-- **Fields covered:** School Name, Address, State, LGA, Principal Name, Phone, Email
-- **Each field has a 📷 button** — tap, take photo, Groq reads and fills that field
-- **Status:** ✅ DEPLOYED
+### Pipeline 3: Manual Field OCR (Step 1 fields) — REMOVED, docs were stale
+This section previously described per-field photo OCR buttons (School
+Name, Address, State, LGA, Principal Name, Phone, Email) routed through
+a Base44 backend proxy (`callGroqVisionProxy`). Verified 2026-07-25:
+**this feature no longer exists in the live `app.js` at all** — no
+Base44 references, no per-field scan buttons. Either it was removed at
+some point without the README being updated, or it never actually
+shipped past this document. Either way, don't build against this
+description — check the live code first if this capability is wanted
+again, and build it with direct Groq calls (see Golden Rules below),
+never a third-party proxy.
 
 ### ⚠️ Golden Rules for OCR
 - Groq calls from browser work fine on mobile — DO NOT wrap in AbortController or manual timeouts
-- Server proxy (Base44) is only used for individual field OCR, NOT for signboard or ledger
+- No external/third-party proxy for any OCR path — direct Groq calls only, own project, own keys
 - Signboard and ledger pipelines are permanently separated
+- Bayo no longer involves Base44 in this project (as of 2026-07-25) — do not reintroduce any proxy dependency
 
 ---
 
@@ -232,6 +240,6 @@ bloom-agent-v2/
 
 ---
 
-*This document is maintained by Koda (Base44 Superagent). Updated before every build.*
+*Bayo no longer involves Base44/Koda in this project as of 2026-07-25. This document is maintained by Claude (Anthropic) sessions going forward.*
 
 

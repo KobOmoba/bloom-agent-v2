@@ -1,3 +1,11 @@
+---
+
+## 2026-08-18 — Teaching Tools Built in school-bloom-v2 (commits 248a040, 24657a0)
+
+Lesson Note Generator + Question Generator built and committed to school-bloom-v2.
+See production master README (bloom-agent/README.md) for full details.
+Ported verbatim to School-Bloom same session.
+
 # ⚠️ STANDING RULE — READ BEFORE TOUCHING ANYTHING
 
 This file is the **sole README for every Edu-BLOOM sandbox app**.

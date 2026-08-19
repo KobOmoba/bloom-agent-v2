@@ -1,3 +1,9 @@
+
+---
+
+## 2026-08-18 — GroqRotator in school-bloom-v2 (commit 5c696c8)
+`_callGroqTeach()` now routes through GroqRotator. See production README for full details.
+
 ---
 
 ## 2026-08-18 — Teaching Tools Built in school-bloom-v2 (commits 248a040, 24657a0)

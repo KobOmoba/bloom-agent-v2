@@ -1,6 +1,33 @@
 
 ---
 
+## 2026-08-19 — Firestore Rules Hardened (v2) + Sandbox README Links Fixed
+
+**Firestore rules corrected and published in Firebase Console.**
+
+Changes from the previous rules (last published 2026-08-10):
+- All admin collection writes now locked to Bayo's Firebase Auth UID (`HSpdm2NYK4hEGqBxyTPEi2wy39F2`)
+- `admin_settings`, `admin_cac`, `admin_activity`, `admin_approved_schools`, `v2_deals` — Bayo-only read + write
+- `admin_agents`, `admin_deals`, `admin_ledger`, `public_ocr_keys`, `admin_opportunities` — public read, Bayo-only write
+- `admin_deals` create — open (agents submit deals without auth)
+- `admin_alerts` create — open (school app raises tier alerts without auth)
+- `admin_agent_requests` — create open, read/update/delete Bayo-only (was missing entirely — fixes silent failure in agent registration form)
+- `admin_opportunities` — read open (was missing — fixes empty Opportunities tab in school app)
+- Default deny catch-all added: `match /{document=**} { allow read, write: if false; }`
+- `schools/{schoolId}` flat document remains open (per-school auth is a deferred project)
+- V2 subcollection rules (staff_directory, students, private/fees, scores) preserved for when subcollection data model ships
+
+**Sandbox README links fixed:**
+- `bloom-portal-v2/README.md` — was pointing to non-existent `bloom-portal/MASTER_README.md` → now correctly points to `bloom-agent-v2/README.md`
+- `bloom-school-v2/README.md` — same broken link → fixed
+
+**Production Master README updated:** `bloom-agent/README.md` now contains the v2 rules block.
+
+See full rules in `bloom-agent/README.md` → Firestore Collections section.
+
+
+---
+
 ## 2026-08-18 — GroqRotator in school-bloom-v2 (commit 5c696c8)
 `_callGroqTeach()` now routes through GroqRotator. See production README for full details.
 
